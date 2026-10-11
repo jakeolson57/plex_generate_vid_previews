@@ -26,6 +26,8 @@ from .priority import (
     WatchEvent,
     RECENT_WATCHED_SCORE,
     FULLY_CACHED_SCORE,
+    ACTIVE_PLAYBACK_SCORE,
+    set_playback_priority,
     add_reason,
     build_priority_infos,
 )
@@ -271,6 +273,10 @@ class Scheduler:
         self._rate_limit_exempt_paths_cache = []  # Cache for exempt paths
         self._rate_limit_exempt_paths_cache_time = 0  # Timestamp of last cache update
         self._priority_refresh_lock = threading.Lock()
+        self._playback_lock = threading.Lock()
+        self._playback_snapshot = None
+        self._playback_checked_at = 0
+        self.playback_thread = None
 
     @staticmethod
     def _priority_order_by():
@@ -464,6 +470,7 @@ class Scheduler:
 
     def _queue_candidate_order_by(self):
         return (
+            case((MediaItem.priority_score >= ACTIVE_PLAYBACK_SCORE, 0), else_=1),
             case((MediaItem.priority_score >= FULLY_CACHED_SCORE, 0), else_=1),
             case((MediaItem.status == PreviewStatus.QUEUED, 0), else_=1),
             MediaItem.is_priority.desc(),
@@ -775,6 +782,9 @@ class Scheduler:
         self.sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
         self.sync_thread.start()
 
+        self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self.playback_thread.start()
+
         if self.config:
             threading.Thread(target=self.refresh_priority_metadata, daemon=True).start()
 
@@ -790,6 +800,8 @@ class Scheduler:
             self.thread.join()
         if self.sync_thread:
             self.sync_thread.join()
+        if self.playback_thread:
+            self.playback_thread.join(timeout=5)
         logger.info("Scheduler stopped")
     
     def _get_selected_gpus(self):
@@ -1556,9 +1568,6 @@ class Scheduler:
                 on_deck_rating_keys=self._collect_on_deck_rating_keys(plex),
             )
 
-            for rating_key in self._collect_active_playback_rating_keys(plex) & missing_rating_keys:
-                add_reason(priority_infos.setdefault(rating_key, PriorityInfo()), "active_playback", 999)
-
             cached_paths = fully_cached_paths()
             if cached_paths:
                 with Session(engine) as session:
@@ -1573,6 +1582,10 @@ class Scheduler:
                         # Keep cached work above the normal score cap, retaining
                         # other priority signals to order items within this tier.
                         info.score = FULLY_CACHED_SCORE + existing_score
+
+            # Fetch playback after the slower hub/cache scan, keeping it current.
+            for rating_key in self._collect_active_playback_rating_keys(plex) & missing_rating_keys:
+                set_playback_priority(priority_infos.setdefault(rating_key, PriorityInfo()), True)
 
             logger.info(f"Detected {len(priority_infos)} scored priority items total")
             return priority_infos
@@ -1675,21 +1688,84 @@ class Scheduler:
             return set()
 
     def _collect_active_playback_rating_keys(self, plex) -> set[int]:
-        keys = set()
-        try:
-            for item in retry_plex_call(plex.sessions):
-                if getattr(item, "type", None) not in ("movie", "episode"):
-                    continue
-                players = getattr(item, "players", []) or []
-                if not any(getattr(player, "state", None) in ("playing", "paused", "buffering") for player in players):
-                    continue
+        snapshot = self.get_active_playback(plex)
+        return {item["rating_key"] for item in snapshot["sessions"]}
+
+    def get_active_playback(self, plex=None) -> dict:
+        with self._playback_lock:
+            if self._playback_snapshot is not None and time.monotonic() - self._playback_checked_at < 10:
+                return self._playback_snapshot
+            try:
+                if plex is None:
+                    if not self.config:
+                        raise RuntimeError("Plex is not configured")
+                    plex = plex_server(self.config)
+                sessions = []
+                for item in retry_plex_call(plex.sessions, max_retries=1):
+                    if getattr(item, "type", None) not in ("movie", "episode"):
+                        continue
+                    try:
+                        key = int(item.ratingKey)
+                    except (TypeError, ValueError):
+                        continue
+                    for index, player in enumerate(getattr(item, "players", []) or []):
+                        state = getattr(player, "state", None)
+                        if state not in ("playing", "paused", "buffering"):
+                            continue
+                        title = getattr(item, "title", "")
+                        show = getattr(item, "grandparentTitle", "")
+                        if isinstance(show, str) and show:
+                            title = f"{show} — {title}"
+                        viewers = getattr(item, "usernames", []) or []
+                        sessions.append({
+                            "id": f"{key}:{getattr(item, 'sessionKey', key)}:{index}",
+                            "rating_key": key,
+                            "title": title if isinstance(title, str) else str(key),
+                            "state": state,
+                            "viewer": viewers[0] if viewers and isinstance(viewers[0], str) else "",
+                            "device": getattr(player, "title", "") if isinstance(getattr(player, "title", ""), str) else "",
+                            "view_offset": int(getattr(item, "viewOffset", 0) or 0),
+                            "duration": int(getattr(item, "duration", 0) or 0),
+                        })
+                self._playback_snapshot = {"available": True, "sessions": sessions, "updated_at": datetime.utcnow().isoformat() + "Z"}
+            except Exception:
+                logger.warning("Plex playback sessions unavailable")
+                self._playback_snapshot = {"available": False, "sessions": [], "updated_at": None}
+            self._playback_checked_at = time.monotonic()
+            return self._playback_snapshot
+
+    def refresh_active_playback_metadata(self):
+        snapshot = self.get_active_playback()
+        if not snapshot["available"]:
+            return
+        active = {item["rating_key"] for item in snapshot["sessions"]}
+        statuses = [PreviewStatus.MISSING, PreviewStatus.QUEUED, PreviewStatus.PROCESSING]
+        with Session(engine) as session:
+            rows = session.exec(select(MediaItem).where(
+                col(MediaItem.status).in_(statuses),
+                or_(col(MediaItem.id).in_(active), col(MediaItem.priority_reasons).contains('"active_playback"')),
+            )).all()
+            for item in rows:
                 try:
-                    keys.add(int(item.ratingKey))
-                except (TypeError, ValueError):
-                    continue
-        except Exception:
-            logger.warning("Failed to collect active Plex playback priority")
-        return keys
+                    reasons = json.loads(item.priority_reasons or "[]")
+                    if not isinstance(reasons, list):
+                        reasons = []
+                except ValueError:
+                    reasons = []
+                info = PriorityInfo(reasons=reasons)
+                set_playback_priority(info, item.id in active)
+                if self._apply_priority_info_to_item(item, info):
+                    session.add(item)
+            session.commit()
+
+    def _playback_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                if self.config:
+                    self.refresh_active_playback_metadata()
+            except Exception:
+                logger.warning("Could not refresh active playback priorities")
+            self.stop_event.wait(15)
 
     def _collect_priority_hub_items(self, plex) -> dict[str, list[HubItem]]:
         hub_items_by_title: dict[str, list[HubItem]] = {}

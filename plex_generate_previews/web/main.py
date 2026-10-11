@@ -990,6 +990,21 @@ async def get_libraries(session: Session = Depends(get_session), user: str = Dep
     libraries = session.exec(select(MediaItem.library_name).distinct()).all()
     return sorted(libraries)
 
+
+@app.get("/api/playback")
+async def get_playback(session: Session = Depends(get_session), user: str = Depends(login_required)):
+    import asyncio
+    snapshot = await asyncio.to_thread(scheduler.get_active_playback)
+    sessions = []
+    for playing in snapshot["sessions"]:
+        item = session.get(MediaItem, playing["rating_key"])
+        sessions.append({
+            **playing,
+            "preview_status": item.status.value if item else None,
+            "preview_progress": item.progress if item else 0,
+        })
+    return {**snapshot, "sessions": sessions}
+
 @app.get("/api/items")
 async def get_items(
     status: Optional[str] = None,

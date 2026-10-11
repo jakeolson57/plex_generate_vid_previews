@@ -669,8 +669,12 @@ cached in InfiniDysk. The catalogue remains saved; enabling Full backlog makes t
 remaining pending items eligible again. A change takes effect for new work; previews
 already processing finish. Priorities refresh every minute independently of library
 sync. Existing hub selection and the first-20-movies-per-hub limit still apply.
-Fully cached InfiniDysk items rank above active playback, Up Next, and hubs in both
-processing modes. Other priority signals rank items within the fully cached group.
+Active Plex playback ranks first, fully cached InfiniDysk items second, followed by
+Up Next and hubs in both processing modes. Playback priorities refresh every 15
+seconds, independently of the slower hub/cache scan. When playback ends, its boost
+is removed while other priority reasons remain. The dashboard's Currently watching
+section shows all current video sessions, including items with completed previews,
+with viewer, device, playback state, and playback progress.
 
 To enable InfiniDysk cache eligibility, set `INFINIDYSK_URL` (for this lab,
 `http://192.168.20.65:8080`) and `INFINIDYSK_API_KEY` in the web container's

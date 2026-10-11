@@ -6,6 +6,7 @@ from typing import Any
 
 MAX_SCORE = 999
 FULLY_CACHED_SCORE = MAX_SCORE + 1
+ACTIVE_PLAYBACK_SCORE = FULLY_CACHED_SCORE * 2
 ON_DECK_SCORE = 900
 NEXT_EPISODE_SCORES = (800, 760, 720)
 MULTI_USER_BOOST = 75
@@ -53,6 +54,18 @@ def add_reason(info: PriorityInfo, reason_type: str, score: int, **metadata: Any
     reason.update({key: value for key, value in metadata.items() if value is not None})
     info.reasons.append(reason)
     info.score = min(MAX_SCORE, info.score + score)
+
+
+def set_playback_priority(info: PriorityInfo, active: bool) -> None:
+    info.reasons = [reason for reason in info.reasons if reason.get("type") != "active_playback"]
+    if active:
+        info.reasons.append({"type": "active_playback", "score": ACTIVE_PLAYBACK_SCORE})
+    normal_score = min(MAX_SCORE, sum(
+        int(reason.get("score", 0)) for reason in info.reasons
+        if reason.get("type") not in ("active_playback", "fully_cached")
+    ))
+    cached_score = FULLY_CACHED_SCORE if any(reason.get("type") == "fully_cached" for reason in info.reasons) else 0
+    info.score = normal_score + cached_score + (ACTIVE_PLAYBACK_SCORE if active else 0)
 
 
 def replace_reason(info: PriorityInfo, reason_type: str, score: int, **metadata: Any) -> None:

@@ -229,6 +229,34 @@
         </div>
     </div>
 
+    <section class="card mb-6 border border-orange-600/40 p-3 sm:p-6" aria-label="Currently watching" x-cloak>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 class="text-base sm:text-xl font-bold">Currently watching <span class="text-sm font-normal text-gray-400" x-text="'(' + playbackSessions.length + ')'" ></span></h2>
+            <span class="text-xs text-orange-300">Highest preview priority</span>
+        </div>
+        <p x-show="playbackLoading" class="text-sm text-gray-400">Checking Plex playback…</p>
+        <p x-show="!playbackLoading && !playbackAvailable" class="text-sm text-gray-400">Plex playback is unavailable. Retrying…</p>
+        <p x-show="!playbackLoading && playbackAvailable && playbackSessions.length === 0" class="text-sm text-gray-400">No active Plex playback.</p>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <template x-for="playing in playbackSessions" :key="playing.id">
+                <article class="min-w-0 bg-gray-800/50 border border-gray-700 rounded-lg p-3 sm:p-4">
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        <span class="text-xs font-semibold text-orange-200 bg-orange-900/40 rounded px-2 py-1" x-text="playing.state === 'paused' ? 'Paused' : (playing.state === 'buffering' ? 'Buffering' : 'Playing')"></span>
+                        <span class="text-xs text-gray-300" x-text="playing.preview_status === 'completed' ? 'Previews ready' : (playing.preview_status ? 'Preview: ' + playing.preview_status.replaceAll('_', ' ') : 'Not in preview catalogue')"></span>
+                    </div>
+                    <p class="font-semibold text-sm sm:text-base break-words" x-text="playing.title"></p>
+                    <p class="text-xs sm:text-sm text-gray-400 mt-1 break-words" x-text="[playing.viewer, playing.device].filter(Boolean).join(' · ')"></p>
+                    <div x-show="playing.duration > 0" class="mt-3">
+                        <div class="h-1.5 bg-gray-700 rounded overflow-hidden" role="progressbar" aria-label="Playback progress" :aria-valuenow="Math.min(100, Math.round(playing.view_offset / playing.duration * 100))" aria-valuemin="0" aria-valuemax="100">
+                            <div class="h-full bg-orange-500 rounded" :style="'width: ' + Math.min(100, playing.view_offset / playing.duration * 100) + '%'"></div>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1" x-text="formatPlaybackTime(playing.view_offset) + ' / ' + formatPlaybackTime(playing.duration)"></p>
+                    </div>
+                </article>
+            </template>
+        </div>
+    </section>
+
     <!-- Library Selector -->
     <div class="mb-4 sm:mb-6">
         <label for="library-select" class="block text-gray-400 text-xs sm:text-sm font-bold mb-1.5 sm:mb-2">Library:</label>
@@ -771,7 +799,11 @@
     <script>
         function dashboard() {
             return {
-                stats: { total: 0, completed: 0, processing: 0, queued: 0, missing: 0, failed: 0 },
+                stats: { total: 0, completed: 0, processing: 0, queued: 0, missing: 0, failed: 0, priority: 0, media_missing: 0,
+                    rate_limit: { limit_gb: 0, is_limited: false, remaining_bytes: 0, processed_bytes: 0, message: '' } },
+                playbackSessions: [],
+                playbackAvailable: true,
+                playbackLoading: true,
                 items: [],
                 processingItems: [], // Items currently being processed or queued (for the processing section)
                 filterStatus: '',
@@ -858,6 +890,7 @@
                 },
 
                 init() {
+                    this.fetchPlayback();
                     this.fetchStats();
                     this.fetchItems();
                     this.fetchProcessingItems(); // Fetch processing items on init
@@ -876,6 +909,7 @@
                              this.fetchItems(true); // Silent refresh
                         }
                     }, 5000);
+                    setInterval(() => this.fetchPlayback(), 15000);
 
                     // Update relative time display every 10 seconds
                     setInterval(() => {
@@ -1074,6 +1108,30 @@
                     this.fetchQueueStatus();
                 },
                 
+                async fetchPlayback() {
+                    try {
+                        const response = await fetch('/api/playback');
+                        if (!response.ok) throw new Error('Playback unavailable');
+                        const data = await response.json();
+                        this.playbackSessions = data.sessions || [];
+                        this.playbackAvailable = data.available;
+                        if (this.page === 1 && !this.search) this.fetchItems(true);
+                    } catch (error) {
+                        this.playbackSessions = [];
+                        this.playbackAvailable = false;
+                    } finally {
+                        this.playbackLoading = false;
+                    }
+                },
+
+                formatPlaybackTime(milliseconds) {
+                    const seconds = Math.floor(Math.max(0, milliseconds || 0) / 1000);
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor(seconds % 3600 / 60);
+                    const remainder = String(seconds % 60).padStart(2, '0');
+                    return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${remainder}` : `${minutes}:${remainder}`;
+                },
+
                 async fetchStats() {
                     try {
                         const res = await fetch('/api/stats');

@@ -13,6 +13,7 @@ from sqlmodel.pool import StaticPool
 from plex_generate_previews.web import database, infini_cache, main, scheduler as scheduler_module
 from plex_generate_previews.web.models import AppSettings, MediaItem, MediaType, PreviewStatus
 from plex_generate_previews.web.scheduler import Scheduler
+from plex_generate_previews.web.priority import PriorityInfo, set_playback_priority
 
 
 @pytest.fixture
@@ -83,14 +84,15 @@ def test_settings_round_trip_and_pending_ui_scope(db):
 
 
 @pytest.mark.parametrize("full_backlog", [False, True])
-def test_cached_work_precedes_queued_playback_work(db, full_backlog):
+def test_queue_orders_playback_then_cached_then_up_next(db, full_backlog):
     with Session(db) as session:
         session.add(AppSettings(id=1, full_backlog=full_backlog))
         session.add(movie(1, is_priority=True, priority_score=999, status=PreviewStatus.QUEUED))
-        session.add(movie(2, is_priority=True, priority_score=1000))
+        session.add(movie(2, is_priority=True, priority_score=1999, status=PreviewStatus.QUEUED))
+        session.add(movie(3, is_priority=True, priority_score=2000))
         session.commit()
         scheduler = Scheduler()
-        assert [item.id for item in session.exec(scheduler._queue_candidates(session, 10)).all()] == [2, 1]
+        assert [item.id for item in session.exec(scheduler._queue_candidates(session, 10)).all()] == [3, 2, 1]
 
 
 def test_priority_refresh_interval_accounts_for_scan_runtime(db, monkeypatch):
@@ -147,8 +149,64 @@ def test_detection_combines_playback_and_cache_with_existing_sources(db, monkeyp
     monkeypatch.setattr(scheduler_module, "fully_cached_paths", lambda: {"/cached"})
     result = scheduler.detect_priority_items(MagicMock(), {1, 2, 3})
     assert set(result) == {1, 2, 3}
-    assert result[2].score > result[1].score > result[3].score
+    assert result[1].score > result[2].score > result[3].score
     assert result[2].reasons[0]["type"] == "fully_cached"
+
+
+def test_playback_tier_preserves_cache_when_session_ends():
+    info = PriorityInfo(reasons=[{"type": "on_deck", "score": 900}, {"type": "next_episode", "score": 800}, {"type": "fully_cached", "score": 1000}])
+    set_playback_priority(info, True)
+    assert info.score == 3999
+    set_playback_priority(info, True)
+    assert len([reason for reason in info.reasons if reason["type"] == "active_playback"]) == 1
+    set_playback_priority(info, False)
+    assert info.score == 1999
+    assert {reason["type"] for reason in info.reasons} == {"on_deck", "next_episode", "fully_cached"}
+
+
+def test_playback_api_includes_completed_and_unknown_items_and_caches_plex(db, monkeypatch):
+    scheduler = Scheduler()
+    plex = MagicMock()
+    plex.sessions.return_value = [SimpleNamespace(
+        ratingKey=str(key), type="episode", title="Episode", grandparentTitle="A Show",
+        players=[SimpleNamespace(state="playing", title="Living room")],
+        usernames=["Viewer"], sessionKey=key, duration=3600000, viewOffset=120000,
+    ) for key in [1, 2]]
+    snapshot = scheduler.get_active_playback(plex)
+    scheduler.get_active_playback(plex)
+    plex.sessions.assert_called_once()
+    monkeypatch.setattr(main.scheduler, "get_active_playback", lambda: snapshot)
+    with Session(db) as session:
+        session.add(movie(1, status=PreviewStatus.COMPLETED, progress=100))
+        session.commit()
+        result = asyncio.run(main.get_playback(session=session, user="test"))
+    assert result["available"] is True
+    assert len(result["sessions"]) == 2
+    assert result["sessions"][0]["title"] == "A Show — Episode"
+    assert result["sessions"][0]["viewer"] == "Viewer"
+    assert result["sessions"][0]["device"] == "Living room"
+    assert result["sessions"][0]["preview_status"] == "completed"
+    assert result["sessions"][1]["preview_status"] is None
+
+
+def test_playback_refresh_promotes_and_demotes_without_dropping_other_sources(db, monkeypatch):
+    scheduler = Scheduler()
+    with Session(db) as session:
+        session.add(movie(1, is_priority=True, priority_score=1000,
+                          priority_reasons='[{"type":"fully_cached","score":1000}]'))
+        session.add(movie(2, is_priority=True, priority_score=2000,
+                          priority_reasons='[{"type":"active_playback","score":2000}]'))
+        session.commit()
+    monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": True, "sessions": [{"rating_key": 1}]})
+    scheduler.refresh_active_playback_metadata()
+    with Session(db) as session:
+        assert session.get(MediaItem, 1).priority_score == 3000
+        assert session.get(MediaItem, 2).priority_score == 0
+        assert session.get(MediaItem, 2).is_priority is False
+    monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": False, "sessions": []})
+    scheduler.refresh_active_playback_metadata()
+    with Session(db) as session:
+        assert session.get(MediaItem, 1).priority_score == 3000
 
 
 def test_cache_catalogue_paginates_and_requires_verified_current_size(monkeypatch):
