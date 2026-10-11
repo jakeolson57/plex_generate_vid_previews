@@ -12,7 +12,33 @@ from plex_generate_previews.web.priority import (
     recency_multiplier,
     score_hub_items,
     score_next_up_episodes,
+    set_playback_priority,
 )
+
+
+def test_recent_partial_tier_survives_cache_and_playback_refresh():
+    result = build_priority_infos([], [], {1, 2}, datetime.now(timezone.utc),
+                                  on_deck_rating_keys={1, 2}, recent_partial_rating_keys={1, 99})
+    assert set(result) == {1, 2}
+    info = result[1]
+    assert info.score == 3249
+    assert info.score > result[2].score
+    assert any(reason['type'] == 'recent_partial' for reason in info.reasons)
+    info.reasons.append({'type': 'fully_cached', 'score': 1000})
+    set_playback_priority(info, False, 1)
+    assert info.score == 3249
+    next_info = PriorityInfo()
+    set_playback_priority(next_info, False, 1)
+    assert info.score > next_info.score
+    set_playback_priority(info, True)
+    assert info.score > 4000
+    set_playback_priority(info, False)
+    assert info.score == 3249
+
+
+def test_recent_partial_boost_expires_when_not_in_current_resume_set():
+    result = build_priority_infos([], [], {1}, datetime.now(timezone.utc), recent_partial_rating_keys=set())
+    assert result == {}
 
 
 def test_add_reason_caps_score_and_keeps_reasons():

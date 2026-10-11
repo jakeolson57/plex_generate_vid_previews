@@ -956,6 +956,7 @@
                     const labels = {
                         on_deck: 'On deck',
                         active_playback: 'Watching now',
+                        recent_partial: 'Recently partially watched',
                         active_next: 'Watching next',
                         fully_cached: 'InfiniDysk cached',
                         next_episode: 'Next up',
@@ -970,6 +971,7 @@
                     const classes = {
                         on_deck: 'bg-amber-900/50 text-amber-200 border border-amber-700/60',
                         active_playback: 'bg-red-900/50 text-red-200 border border-red-700/60',
+                        recent_partial: 'bg-orange-900/50 text-orange-200 border border-orange-700/60',
                         active_next: 'bg-red-900/50 text-red-200 border border-red-700/60',
                         fully_cached: 'bg-indigo-900/50 text-indigo-200 border border-indigo-700/60',
                         next_episode: 'bg-sky-900/50 text-sky-200 border border-sky-700/60',
@@ -983,6 +985,7 @@
                 priorityReasonTitle(chip) {
                     const label = this.priorityReasonLabel(chip);
                     const score = chip.score ? `score +${chip.score}` : 'priority item';
+                    if (chip.type === 'recent_partial') return `Partially watched within the last 7 days (${score})`;
                     if (chip.type === 'hub' && chip.hub) return `Hub: ${chip.hub} (${score})`;
                     if (chip.type === 'next_episode' && chip.position) return `${label}: predicted episode ${chip.position} (${score})`;
                     if (chip.type === 'multi_user_overlap' && chip.user_count) return `${label}: ${chip.user_count} users (${score})`;

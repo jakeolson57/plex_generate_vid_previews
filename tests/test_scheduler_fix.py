@@ -445,6 +445,7 @@ def test_priority_payload_handles_missing_or_invalid_reasons():
 
 def test_detect_priority_items_returns_scored_priority_infos(monkeypatch):
     scheduler = Scheduler()
+    monkeypatch.setattr(scheduler, "_read_recent_partial_rating_keys", lambda now: set())
     scheduler.config = MagicMock()
     scheduler.config.plex_config_folder = "/plex"
 
@@ -669,3 +670,19 @@ def test_queue_candidate_order_prioritizes_manual_queue_then_priority_score(mock
             "Next Episode",
             "Hub Only",
         ]
+
+def test_recent_partial_source_failure_preserves_priority_refresh(monkeypatch):
+    from plex_generate_previews.web.resume_priority import ResumeStateError
+
+    scheduler = Scheduler()
+    monkeypatch.setattr(scheduler, "_read_priority_episode_rows", lambda: [])
+    monkeypatch.setattr(scheduler, "_read_priority_watch_events", lambda limit: [])
+    monkeypatch.setattr(scheduler, "_collect_priority_hub_items", lambda plex: {})
+    monkeypatch.setattr(scheduler, "_collect_on_deck_rating_keys", lambda plex: set())
+
+    def unavailable(now):
+        raise ResumeStateError("Resume state unavailable")
+
+    monkeypatch.setattr(scheduler, "_read_recent_partial_rating_keys", unavailable)
+    with pytest.raises(ResumeStateError, match="Resume state unavailable"):
+        scheduler.detect_priority_items(MagicMock(), missing_rating_keys={1})

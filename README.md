@@ -663,7 +663,8 @@ The web interface uses the same configuration as the CLI tool, plus these additi
 
 Settings → **Full backlog** controls the web scheduler's processing scope (off by
 default). When off, the pending list and processing queue contain only active Plex
-playback (including paused/buffering sessions), existing Up Next/On Deck priorities,
+playback (including paused/buffering sessions), items partially watched in the last
+seven days, existing Up Next/On Deck priorities,
 existing selected Plex hub priorities, and items with at least one media version fully
 cached in InfiniDysk. The catalogue remains saved; enabling Full backlog makes the
 remaining pending items eligible again. A change takes effect for new work; previews
@@ -671,8 +672,13 @@ already processing finish. Priorities refresh every minute independently of libr
 sync. Existing hub selection and the first-20-movies-per-hub limit still apply.
 While an episode is being watched, the next three episodes needing previews from that show are prioritized above cached-only items, in episode order (including across seasons). They carry a **Watching next** badge. The currently playing item remains first when its own previews are missing. These temporary boosts are removed when playback ends.
 
-Active Plex playback and its next episodes rank first, fully cached InfiniDysk items second, followed by
-Up Next and hubs in both processing modes. Playback priorities refresh every 15
+Active Plex playback ranks first, then items partially watched in the last seven days,
+then the next episodes of active shows, fully cached InfiniDysk items, Up Next and hubs
+in both processing modes. Recent partial watches use each viewer's saved resume offset
+and last-viewed time, including rewatches, and carry a **Recently partially watched** badge.
+The boost expires after seven days or when Plex clears the resume offset on completion.
+PostgreSQL deployments must grant the preview reader SELECT on `plex.metadata_item_settings`
+(see `docs/recent-partial-priority.sql`). Playback priorities refresh every 15
 seconds, independently of the slower hub/cache scan. When playback ends, its boost
 is removed while other priority reasons remain. The dashboard's Currently watching
 section shows all current video sessions, including items with completed previews,

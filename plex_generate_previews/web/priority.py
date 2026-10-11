@@ -8,6 +8,7 @@ MAX_SCORE = 999
 FULLY_CACHED_SCORE = MAX_SCORE + 1
 ACTIVE_NEXT_SCORE = FULLY_CACHED_SCORE * 2
 ACTIVE_PLAYBACK_SCORE = FULLY_CACHED_SCORE * 4
+RECENT_PARTIAL_SCORE = FULLY_CACHED_SCORE * 3
 ON_DECK_SCORE = 900
 NEXT_EPISODE_SCORES = (800, 760, 720)
 MULTI_USER_BOOST = 75
@@ -65,13 +66,16 @@ def set_playback_priority(info: PriorityInfo, active: bool, next_position: int |
         info.reasons.append({"type": "active_next", "score": ACTIVE_NEXT_SCORE, "position": next_position})
     normal_score = min(MAX_SCORE, sum(
         int(reason.get("score", 0)) for reason in info.reasons
-        if reason.get("type") not in ("active_playback", "active_next", "fully_cached")
+        if reason.get("type") not in ("active_playback", "active_next", "fully_cached", "recent_partial")
     ))
     cached_score = FULLY_CACHED_SCORE if any(reason.get("type") == "fully_cached" for reason in info.reasons) else 0
     info.score = normal_score + cached_score + (ACTIVE_PLAYBACK_SCORE if active else 0)
     if next_position is not None and not active:
         # Preserve episode order ahead of cache and historical boosts.
         info.score = ACTIVE_NEXT_SCORE + (4 - min(next_position, 3)) * 250 + min(249, normal_score)
+    if not active and any(reason.get("type") == "recent_partial" for reason in info.reasons):
+        # Resume items outrank upcoming episodes and cache, below active playback.
+        info.score = RECENT_PARTIAL_SCORE + min(249, normal_score + cached_score)
 
 
 def active_next_episodes(active_keys: set[int], episodes: list[EpisodeRow], eligible_keys: set[int]) -> dict[int, int]:
@@ -271,6 +275,7 @@ def build_priority_infos(
     now: datetime,
     hub_items_by_title: dict[str, list[HubItem]] | None = None,
     on_deck_rating_keys: set[int] | None = None,
+    recent_partial_rating_keys: set[int] | None = None,
 ) -> dict[int, PriorityInfo]:
     result: dict[int, PriorityInfo] = {}
     merge_priority_info(
@@ -294,4 +299,8 @@ def build_priority_infos(
         score_on_deck_items(on_deck_rating_keys or set(), missing_rating_keys),
     )
 
+    for rating_key in (recent_partial_rating_keys or set()) & missing_rating_keys:
+        add_reason(result.setdefault(rating_key, PriorityInfo()), "recent_partial", RECENT_PARTIAL_SCORE)
+    for info in result.values():
+        set_playback_priority(info, False)
     return result

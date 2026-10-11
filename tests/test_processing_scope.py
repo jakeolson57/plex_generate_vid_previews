@@ -142,6 +142,7 @@ def test_detection_combines_playback_and_cache_with_existing_sources(db, monkeyp
         session.add(movie(2, file_path="/cached"))
         session.commit()
     monkeypatch.setattr(scheduler, "_read_priority_watch_events", lambda limit: [])
+    monkeypatch.setattr(scheduler, "_read_recent_partial_rating_keys", lambda now: {3})
     monkeypatch.setattr(scheduler, "_read_priority_episode_rows", lambda: [])
     monkeypatch.setattr(scheduler, "_collect_priority_hub_items", lambda plex: {})
     monkeypatch.setattr(scheduler, "_collect_on_deck_rating_keys", lambda plex: {3})
@@ -149,7 +150,7 @@ def test_detection_combines_playback_and_cache_with_existing_sources(db, monkeyp
     monkeypatch.setattr(scheduler_module, "fully_cached_paths", lambda: {"/cached"})
     result = scheduler.detect_priority_items(MagicMock(), {1, 2, 3})
     assert set(result) == {1, 2, 3}
-    assert result[1].score > result[2].score > result[3].score
+    assert result[1].score > result[3].score > result[2].score
     assert result[2].reasons[0]["type"] == "fully_cached"
 
 

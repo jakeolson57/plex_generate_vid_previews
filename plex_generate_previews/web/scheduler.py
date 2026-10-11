@@ -19,6 +19,7 @@ from ..utils import setup_working_directory, sanitize_path
 from .database import engine, get_session
 from .models import MediaItem, PreviewStatus, MediaType, AppSettings
 from .infini_cache import fully_cached_paths, item_is_fully_cached, cached_part_paths
+from .resume_priority import ResumeStateError, recent_partial_rating_keys
 from .priority import (
     EpisodeRow,
     HubItem,
@@ -1584,13 +1585,15 @@ class Scheduler:
                     )
 
             episodes = self._read_priority_episode_rows()
+            now = datetime.utcnow().replace(tzinfo=timezone.utc)
             priority_infos = build_priority_infos(
                 watch_events=self._read_priority_watch_events(history_limit),
                 episodes=episodes,
                 missing_rating_keys=missing_rating_keys,
-                now=datetime.utcnow().replace(tzinfo=timezone.utc),
+                now=now,
                 hub_items_by_title=self._collect_priority_hub_items(plex),
                 on_deck_rating_keys=self._collect_on_deck_rating_keys(plex),
+                recent_partial_rating_keys=self._read_recent_partial_rating_keys(now),
             )
 
             cached_paths = fully_cached_paths()
@@ -1613,16 +1616,25 @@ class Scheduler:
             active = self._collect_active_playback_rating_keys(plex)
             following = active_next_episodes(active, episodes, missing_rating_keys)
             for rating_key in (active & missing_rating_keys) | following.keys():
-                set_playback_priority(priority_infos.setdefault(rating_key, PriorityInfo()), rating_key in active, following.get(rating_key))
+                priority_infos.setdefault(rating_key, PriorityInfo())
+            for rating_key, info in priority_infos.items():
+                set_playback_priority(info, rating_key in active, following.get(rating_key))
 
             logger.info(f"Detected {len(priority_infos)} scored priority items total")
             return priority_infos
 
+        except ResumeStateError:
+            raise
         except Exception as e:
             logger.error(f"Priority detection failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return {}
+
+    def _read_recent_partial_rating_keys(self, now: datetime) -> set[int]:
+        return recent_partial_rating_keys(self.config,
+            int((now - timedelta(days=7)).timestamp()), int(now.timestamp())
+        )
 
     def _plex_db_path(self) -> str:
         return os.path.join(
