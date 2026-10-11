@@ -18,7 +18,7 @@ from ..gpu_detection import detect_all_gpus
 from ..utils import setup_working_directory, sanitize_path
 from .database import engine, get_session
 from .models import MediaItem, PreviewStatus, MediaType, AppSettings
-from .infini_cache import fully_cached_paths, item_is_fully_cached
+from .infini_cache import fully_cached_paths, item_is_fully_cached, cached_part_paths
 from .priority import (
     EpisodeRow,
     HubItem,
@@ -217,6 +217,15 @@ class DbProgressManager:
                 bif_path = sanitize_path(os.path.join(bundle_path, 'Contents', 'Indexes', 'index-sd.bif'))
                 item.bif_path = bif_path
             logger.info(f"Marked item {item.id} ({item.title}) as COMPLETED")
+            scopes = getattr(scheduler.config, "preview_part_scopes", {}) if scheduler.config else {}
+            if str(item.id) in scopes and item.media_parts_info:
+                parts = json.loads(item.media_parts_info)
+                if any(not part.get("bif_path") or not os.path.exists(part["bif_path"]) for part in parts):
+                    # Keep uncached versions available for a future full-backlog run.
+                    item.status = PreviewStatus.MISSING
+                    item.progress = 0
+                    scheduler._apply_priority_info_to_item(item, None)
+
 
         elif progress > 0:
             # Processing - but don't overwrite terminal states (FAILED, COMPLETED, SLOW_FAILED)
@@ -481,6 +490,18 @@ class Scheduler:
             MediaItem.queue_order.asc(),
             MediaItem.updated_at.desc(),
         )
+
+    def _configure_part_scope(self, item, full_backlog):
+        scopes = getattr(self.config, "preview_part_scopes", None)
+        if scopes is None:
+            scopes = self.config.preview_part_scopes = {}
+        reasons = json.loads(item.priority_reasons or "[]")
+        cached_only = reasons and all(reason.get("type") == "fully_cached" for reason in reasons)
+        paths = {path for reason in reasons if reason.get("type") == "fully_cached" for path in reason.get("file_paths", [])}
+        if not full_backlog and cached_only and paths:
+            scopes[str(item.id)] = paths
+        else:
+            scopes.pop(str(item.id), None)
 
     def _queue_candidates(self, session, limit):
         settings = session.get(AppSettings, 1)
@@ -1579,10 +1600,11 @@ class Scheduler:
                         col(MediaItem.id).in_(missing_rating_keys)
                     )).all()
                 for item in candidates:
-                    if item_is_fully_cached(item, cached_paths):
+                    cached_versions = cached_part_paths(item, cached_paths, missing_only=True)
+                    if cached_versions:
                         info = priority_infos.setdefault(item.id, PriorityInfo())
                         existing_score = info.score
-                        add_reason(info, "fully_cached", FULLY_CACHED_SCORE)
+                        add_reason(info, "fully_cached", FULLY_CACHED_SCORE, file_paths=sorted(cached_versions))
                         # Keep cached work above the normal score cap, retaining
                         # other priority signals to order items within this tier.
                         info.score = FULLY_CACHED_SCORE + existing_score
@@ -2484,6 +2506,7 @@ class Scheduler:
                     item.status = PreviewStatus.QUEUED
                     session.add(item)
 
+                self._configure_part_scope(item, bool(session.get(AppSettings, 1) and session.get(AppSettings, 1).full_backlog))
                 process_list.append((str(item.id), item.title, item.media_type))
 
             session.commit()
@@ -2534,6 +2557,7 @@ class Scheduler:
                     if item.status == PreviewStatus.MISSING:
                         item.status = PreviewStatus.QUEUED
                         session.add(item)
+                    self._configure_part_scope(item, bool(session.get(AppSettings, 1) and session.get(AppSettings, 1).full_backlog))
                     new_items.append((str(item.id), item.title, item.media_type))
 
                 session.commit()

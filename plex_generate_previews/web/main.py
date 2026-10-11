@@ -1164,6 +1164,18 @@ async def get_items(
                         except OSError:
                             pass
 
+                    part_priority = priority_payload(item)
+                    reasons = part_priority["priority_reasons"]
+                    cached_only = reasons and all(reason.get("type") == "fully_cached" for reason in reasons)
+                    scoped_cache = any(reason.get("file_paths") for reason in reasons if reason.get("type") == "fully_cached")
+                    cached_version = any(file_path in reason.get("file_paths", []) for reason in reasons if reason.get("type") == "fully_cached")
+                    if scoped_cache and not cached_version:
+                        part_priority["priority_reasons"] = [reason for reason in reasons if reason.get("type") != "fully_cached"]
+                        if cached_only:
+                            part_priority.update(is_priority=False, priority_score=0)
+                            if (not settings or not settings.full_backlog) and part_status in (PreviewStatus.MISSING, PreviewStatus.QUEUED):
+                                continue
+
                     expanded_items.append({
                         "id": f"{item.id}_part{idx}",  # Unique ID per part
                         "item_id": item.id,  # Original item ID
@@ -1183,7 +1195,7 @@ async def get_items(
                         "last_attempted_at": item.last_attempted_at,
                         "error_message": part_error,
                         "is_multi_part": len(parts) > 1,
-                        **priority_payload(item),
+                        **part_priority,
                     })
             except (json.JSONDecodeError, Exception) as e:
                 logger.error(f"Error parsing media_parts_info for item {item.id}: {e}")

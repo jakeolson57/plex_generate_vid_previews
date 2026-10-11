@@ -236,7 +236,7 @@ def test_cache_catalogue_paginates_and_requires_verified_current_size(monkeypatc
     assert infini_cache.fully_cached_paths() == set()
 
 
-def test_cache_item_requires_all_parts_and_matches_symlink_uuid(tmp_path):
+def test_cache_item_accepts_one_cached_version_and_matches_symlink_uuid(tmp_path):
     key = "00000000-0000-0000-0000-000000000001"
     link = tmp_path / "movie.mkv"
     link.symlink_to("/mnt/remote/infinidysk/.ids/" + key.replace("-", "") + ".mkv")
@@ -244,7 +244,8 @@ def test_cache_item_requires_all_parts_and_matches_symlink_uuid(tmp_path):
     cached = {"/mnt/remote/infinidysk/.ids/" + key}
     assert infini_cache.item_is_fully_cached(item, cached)
     item.media_parts_info = json.dumps([{"file_path": str(link)}, {"file_path": "/cold"}])
-    assert not infini_cache.item_is_fully_cached(item, cached)
+    assert infini_cache.item_is_fully_cached(item, cached)
+    assert infini_cache.cached_part_paths(item, cached) == {str(link)}
     item.media_parts_info = "invalid"
     assert not infini_cache.item_is_fully_cached(item, cached)
 
@@ -329,3 +330,71 @@ def test_completed_current_episode_promotes_followups_above_cached_and_demotes_o
     with Session(db) as session:
         assert session.get(MediaItem, 2).priority_score == 0
         assert session.get(MediaItem, 4).priority_score == 1900
+
+
+def test_cached_only_scope_excludes_cold_version_and_full_backlog_restores_it():
+    scheduler = Scheduler()
+    scheduler.config = SimpleNamespace()
+    item = movie(1, priority_reasons='[{"type":"fully_cached","score":1000,"file_paths":["/4k"]}]')
+    scheduler._configure_part_scope(item, False)
+    assert scheduler.config.preview_part_scopes == {"1": {"/4k"}}
+    scheduler._configure_part_scope(item, True)
+    assert scheduler.config.preview_part_scopes == {}
+    item.priority_reasons='[{"type":"fully_cached","file_paths":["/4k"]},{"type":"active_next"}]'
+    scheduler._configure_part_scope(item, False)
+    assert scheduler.config.preview_part_scopes == {}
+
+
+def test_cached_version_with_existing_preview_is_no_longer_pending(tmp_path):
+    from plex_generate_previews.web.infini_cache import cached_part_paths
+    bif = tmp_path / "preview.bif"; bif.write_bytes(b"ready")
+    item = movie(1, media_parts_info=json.dumps([{"file_path":"/4k","bif_path":str(bif)},{"file_path":"/cold"}]))
+    assert cached_part_paths(item, {"/4k"}) == {"/4k"}
+    assert cached_part_paths(item, {"/4k"}, missing_only=True) == set()
+
+
+def test_partial_cached_completion_preserves_cold_version_for_full_backlog(db, monkeypatch, tmp_path):
+    ready = tmp_path / "ready.bif"; ready.write_bytes(b"ready")
+    cold = tmp_path / "cold.bif"
+    monkeypatch.setattr(scheduler_module.scheduler, "config", SimpleNamespace(preview_part_scopes={"1": {"/4k"}}, plex_config_folder=str(tmp_path)))
+    item = movie(1, status=PreviewStatus.PROCESSING, is_priority=True, priority_score=1000,
+                 media_parts_info=json.dumps([{"file_path":"/4k","bif_path":str(ready)},{"file_path":"/cold","bif_path":str(cold)}]))
+    scheduler_module.DbProgressManager()._apply_update_to_item(item, {"progress_percent":100})
+    assert item.status == PreviewStatus.MISSING
+    assert item.is_priority is False
+    assert item.priority_score == 0
+
+
+def test_processing_cached_version_never_opens_cold_version(monkeypatch, tmp_path):
+    from plex_generate_previews import media_processing, plex_client
+    config = SimpleNamespace(preview_part_scopes={"1": {"/4k"}}, plex_config_folder=str(tmp_path), plex_path_mappings=[],
+                             plex_videos_path_mapping="", regenerate_thumbnails=False)
+    monkeypatch.setattr(plex_client, "get_media_parts_from_database", lambda *args: [("/cold", "coldhash"), ("/4k", "cachedhash")])
+    seen = []
+    def isfile(path):
+        seen.append(path)
+        return path == "/4k"
+    monkeypatch.setattr(media_processing.os.path, "isfile", isfile)
+    monkeypatch.setattr(media_processing, "_setup_bundle_paths", lambda *args: (str(tmp_path), "output.bif", str(tmp_path)))
+    monkeypatch.setattr(media_processing, "_ensure_directories", lambda *args: True)
+    monkeypatch.setattr(media_processing, "_cleanup_temp_directory", lambda *args: None)
+    generate = MagicMock()
+    monkeypatch.setattr(media_processing, "_generate_and_save_bif", generate)
+    media_processing.process_item("1", None, None, config, MagicMock())
+    assert "/cold" not in seen
+    assert generate.call_args.args[0] == "/4k"
+
+
+def test_pending_list_shows_cached_version_only_and_full_backlog_shows_both(db):
+    with Session(db) as session:
+        session.add(AppSettings(id=1, full_backlog=False))
+        session.add(movie(1, is_priority=True, priority_score=1000,
+                          priority_reasons='[{"type":"fully_cached","score":1000,"file_paths":["/4k"]}]',
+                          media_parts_info='[{"file_path":"/cold"},{"file_path":"/4k"}]'))
+        session.commit()
+        result = asyncio.run(main.get_items(session=session, user="test"))
+        assert [item["file_path"] for item in result["items"]] == ["/4k"]
+        settings = session.get(AppSettings, 1); settings.full_backlog=True;session.add(settings);session.commit()
+        result = asyncio.run(main.get_items(session=session, user="test"))
+        assert [item["file_path"] for item in result["items"]] == ["/cold", "/4k"]
+        assert result["items"][0]["is_priority"] is False

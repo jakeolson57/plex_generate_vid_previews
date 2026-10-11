@@ -664,7 +664,7 @@ The web interface uses the same configuration as the CLI tool, plus these additi
 Settings → **Full backlog** controls the web scheduler's processing scope (off by
 default). When off, the pending list and processing queue contain only active Plex
 playback (including paused/buffering sessions), existing Up Next/On Deck priorities,
-existing selected Plex hub priorities, and items whose media parts are all fully
+existing selected Plex hub priorities, and items with at least one media version fully
 cached in InfiniDysk. The catalogue remains saved; enabling Full backlog makes the
 remaining pending items eligible again. A change takes effect for new work; previews
 already processing finish. Priorities refresh every minute independently of library
@@ -684,6 +684,7 @@ environment. `INFINIDYSK_MOUNT_PATH` defaults to `/mnt/remote/infinidysk`.
 `INFINIDYSK_LIBRARY_PATH` defaults to `/mnt/plex` and resolves relative library
 link mappings returned by InfiniDysk. Flat and sharded `.ids` links are supported;
 deleted cache entries returning HTTP 404 are skipped individually.
+Cached-only jobs in priority mode process the cached versions independently; uncached versions remain available for Full backlog.
 Only online native-cache entries with verified bytes equal to the full current
 file size qualify; partial cache and rclone sparse-file size do not. Cache API
 errors exclude cached-only candidates until the next successful refresh; Plex

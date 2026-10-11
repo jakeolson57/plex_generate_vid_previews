@@ -70,7 +70,7 @@ def fully_cached_paths() -> set[str]:
         return set()
 
 
-def item_is_fully_cached(item, cached_paths: set[str]) -> bool:
+def _parts_are_fully_cached(item, cached_paths: set[str]) -> bool:
     if not cached_paths:
         return False
     try:
@@ -119,3 +119,20 @@ def item_is_fully_cached(item, cached_paths: set[str]) -> bool:
         return bool(identity_cached(resolved))
 
     return all(cached(path) for path in paths)
+
+
+def cached_part_paths(item, cached_paths: set[str], missing_only=False) -> set[str]:
+    """Return independently cached media versions, optionally excluding ready BIFs."""
+    from types import SimpleNamespace
+    try:
+        parts = json.loads(item.media_parts_info) if item.media_parts_info else [{"file_path": item.file_path}]
+        return {part["file_path"] for part in parts
+                if part.get("file_path")
+                and (not missing_only or not (part.get("bif_path") and os.path.exists(part["bif_path"])))
+                and _parts_are_fully_cached(SimpleNamespace(file_path=part["file_path"], media_parts_info=None), cached_paths)}
+    except (ValueError, TypeError, AttributeError, KeyError):
+        return set()
+
+
+def item_is_fully_cached(item, cached_paths: set[str]) -> bool:
+    return bool(cached_part_paths(item, cached_paths))

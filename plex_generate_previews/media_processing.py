@@ -991,6 +991,13 @@ def process_item(item_key: str, gpu: Optional[str], gpu_device_path: Optional[st
         logger.info(f"Item {item_key} has no media parts in database - may have been deleted. Skipping.")
         raise ItemNotFoundError(f"Item {item_key} has no media parts in Plex database")
 
+    scopes = getattr(config, "preview_part_scopes", {})
+    scope = scopes.get(str(item_key)) if isinstance(scopes, dict) else None
+    if scope is not None:
+        media_parts_data = [(path, bundle) for path, bundle in media_parts_data if path in scope]
+        if not media_parts_data:
+            raise ItemNotFoundError("Selected cached media versions are no longer present")
+
     # Track if we successfully processed at least one media part
     processed_any = False
     processing_error = None
