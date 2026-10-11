@@ -168,6 +168,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "mount_failure_threshold": 50.0,
             "enable_multi_user_priority": False,
             "priority_history_limit": 50,
+            "full_backlog": False,
             "data_limit_gb_per_hour": 0.0,
             "rate_limit_exempt_paths": ""
         }
@@ -183,6 +184,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "mount_failure_threshold": settings.mount_failure_threshold if hasattr(settings, 'mount_failure_threshold') else 50.0,
         "enable_multi_user_priority": settings.enable_multi_user_priority if hasattr(settings, 'enable_multi_user_priority') else False,
         "priority_history_limit": settings.priority_history_limit if hasattr(settings, 'priority_history_limit') else 50,
+        "full_backlog": settings.full_backlog,
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
     }
@@ -205,6 +207,11 @@ async def update_settings(
         settings = AppSettings(id=1)
     
     # Update threads
+    if "full_backlog" in payload:
+        if not isinstance(payload["full_backlog"], bool):
+            raise HTTPException(status_code=400, detail="full_backlog must be a boolean")
+        settings.full_backlog = payload["full_backlog"]
+
     if "gpu_threads" in payload:
         settings.gpu_threads = int(payload["gpu_threads"])
     if "cpu_threads" in payload:
@@ -256,6 +263,8 @@ async def update_settings(
     session.commit()
     
     # Reload scheduler config to pick up new thread counts
+    scheduler.sync_wake_event.set()
+    scheduler.wake_event.set()
     # We can force a re-init of the worker pool by clearing it?
     # No, worker pool is complex to hot-swap. 
     # Safest is to just update the config object if possible, but pool size is fixed on init.
@@ -926,8 +935,10 @@ async def get_stats(session: Session = Depends(get_session), user: str = Depends
 
     total = session.exec(select(func.count(MediaItem.id))).one()
     completed = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.COMPLETED)).one()
-    queued = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.QUEUED)).one()
-    missing = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.MISSING)).one()
+    settings = session.get(AppSettings, 1)
+    scope = True if settings and settings.full_backlog else MediaItem.is_priority == True
+    queued = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.QUEUED, scope)).one()
+    missing = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.MISSING, scope)).one()
     processing = session.exec(select(func.count(MediaItem.id)).where(MediaItem.status == PreviewStatus.PROCESSING)).one()
     priority = session.exec(select(func.count(MediaItem.id)).where(MediaItem.is_priority == True)).one()
     failed = session.exec(select(func.count(MediaItem.id)).where(
@@ -995,6 +1006,12 @@ async def get_items(
 ):
     # Base query
     filters = []
+    settings = session.get(AppSettings, 1)
+    if not settings or not settings.full_backlog:
+        filters.append(or_(
+            col(MediaItem.status).notin_([PreviewStatus.MISSING, PreviewStatus.QUEUED]),
+            MediaItem.is_priority == True,
+        ))
     if status:
         filters.append(MediaItem.status == status)
     if search:

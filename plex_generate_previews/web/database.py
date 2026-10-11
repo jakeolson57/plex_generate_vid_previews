@@ -42,6 +42,11 @@ def create_db_and_tables():
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN full_backlog INTEGER NOT NULL DEFAULT 0"))
+    except Exception:
+        pass
     
     # Migration: Add admin_password_hash if missing
     # This is a simple migration for SQLite since SQLModel doesn't auto-migrate columns

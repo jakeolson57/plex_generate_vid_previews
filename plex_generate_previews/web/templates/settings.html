@@ -125,6 +125,15 @@
             </div>
         </div>
 
+        <div class="card">
+            <h2 class="text-lg sm:text-xl font-bold mb-4">Processing scope</h2>
+            <label class="flex items-center cursor-pointer">
+                <input type="checkbox" x-model="config.full_backlog" class="mr-2 w-4 h-4">
+                <span class="text-gray-300">Full backlog</span>
+            </label>
+            <p class="text-sm text-gray-400 mt-2">When off, process only active Plex playback, Up Next priorities, Plex hub priorities, and fully cached InfiniDysk items. Sources refresh every minute. Existing work finishes; other items stay saved for later.</p>
+        </div>
+
         <!-- Multi-User Priority -->
         <div class="card border border-purple-900 bg-purple-900/10">
             <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-purple-900 text-purple-400">Multi-User Priority</h2>
@@ -339,6 +348,7 @@
                     mount_failure_threshold: 50.0,
                     enable_multi_user_priority: false,
                     priority_history_limit: 50,
+                    full_backlog: false,
                     data_limit_gb_per_hour: 0.0,
                     rate_limit_exempt_paths: ''
                 },
@@ -415,6 +425,7 @@
                             mount_failure_threshold: this.config.mount_failure_threshold,
                             enable_multi_user_priority: this.config.enable_multi_user_priority,
                             priority_history_limit: this.config.priority_history_limit,
+                            full_backlog: this.config.full_backlog,
                             data_limit_gb_per_hour: this.config.data_limit_gb_per_hour,
                             rate_limit_exempt_paths: this.config.rate_limit_exempt_paths
                         };

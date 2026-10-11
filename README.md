@@ -661,6 +661,28 @@ The web interface uses the same configuration as the CLI tool, plus these additi
 
 ### First-Time Setup
 
+Settings → **Full backlog** controls the web scheduler's processing scope (off by
+default). When off, the pending list and processing queue contain only active Plex
+playback (including paused/buffering sessions), existing Up Next/On Deck priorities,
+existing selected Plex hub priorities, and items whose media parts are all fully
+cached in InfiniDysk. The catalogue remains saved; enabling Full backlog makes the
+remaining pending items eligible again. A change takes effect for new work; previews
+already processing finish. Priorities refresh every minute independently of library
+sync. Existing hub selection and the first-20-movies-per-hub limit still apply.
+Fully cached InfiniDysk items rank above active playback, Up Next, and hubs in both
+processing modes. Other priority signals rank items within the fully cached group.
+
+To enable InfiniDysk cache eligibility, set `INFINIDYSK_URL` (for this lab,
+`http://192.168.20.65:8080`) and `INFINIDYSK_API_KEY` in the web container's
+environment. `INFINIDYSK_MOUNT_PATH` defaults to `/mnt/remote/infinidysk`.
+`INFINIDYSK_LIBRARY_PATH` defaults to `/mnt/plex` and resolves relative library
+link mappings returned by InfiniDysk. Flat and sharded `.ids` links are supported;
+deleted cache entries returning HTTP 404 are skipped individually.
+Only online native-cache entries with verified bytes equal to the full current
+file size qualify; partial cache and rclone sparse-file size do not. Cache API
+errors exclude cached-only candidates until the next successful refresh; Plex
+priorities continue to qualify. Without these credentials, sources 1–3 still work.
+
 1. **Start the web interface** with the command above
 2. **Login** with default credentials (username: admin, password: admin)
 3. **Configure Plex** if using OAuth setup, or use environment variables

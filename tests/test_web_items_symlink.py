@@ -6,7 +6,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from plex_generate_previews.web.main import app, get_session, get_current_user
-from plex_generate_previews.web.models import MediaItem, PreviewStatus, MediaType
+from plex_generate_previews.web.models import AppSettings, MediaItem, PreviewStatus, MediaType
 from pathlib import Path
 
 # Setup in-memory DB
@@ -19,6 +19,8 @@ def session_fixture():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
+        session.add(AppSettings(id=1, full_backlog=True))
+        session.commit()
         yield session
 
 @pytest.fixture(name="client")

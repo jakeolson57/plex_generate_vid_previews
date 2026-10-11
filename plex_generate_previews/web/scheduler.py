@@ -18,12 +18,14 @@ from ..gpu_detection import detect_all_gpus
 from ..utils import setup_working_directory, sanitize_path
 from .database import engine, get_session
 from .models import MediaItem, PreviewStatus, MediaType, AppSettings
+from .infini_cache import fully_cached_paths, item_is_fully_cached
 from .priority import (
     EpisodeRow,
     HubItem,
     PriorityInfo,
     WatchEvent,
     RECENT_WATCHED_SCORE,
+    FULLY_CACHED_SCORE,
     add_reason,
     build_priority_infos,
 )
@@ -462,12 +464,23 @@ class Scheduler:
 
     def _queue_candidate_order_by(self):
         return (
+            case((MediaItem.priority_score >= FULLY_CACHED_SCORE, 0), else_=1),
             case((MediaItem.status == PreviewStatus.QUEUED, 0), else_=1),
             MediaItem.is_priority.desc(),
             MediaItem.priority_score.desc(),
             MediaItem.queue_order.asc(),
             MediaItem.updated_at.desc(),
         )
+
+    def _queue_candidates(self, session, limit):
+        settings = session.get(AppSettings, 1)
+        statement = select(MediaItem).where(
+            col(MediaItem.status).in_([PreviewStatus.MISSING, PreviewStatus.QUEUED])
+        )
+        if not settings or not settings.full_backlog:
+            statement = statement.where(MediaItem.is_priority == True)
+            return statement.order_by(*self._priority_order_by()).limit(limit)
+        return statement.order_by(*self._queue_candidate_order_by()).limit(limit)
 
     def validate_mount_paths(self) -> tuple[bool, list[str]]:
         """
@@ -907,6 +920,7 @@ class Scheduler:
     def _sync_loop(self):
         """Background thread for library sync operations to avoid blocking queue processing."""
         while not self.stop_event.is_set():
+            cycle_started = time.monotonic()
             try:
                 if not self.config:
                     time.sleep(10)
@@ -933,16 +947,17 @@ class Scheduler:
 
                 if sync_needed:
                     logger.info("Background sync: Starting library sync...")
-                    self.refresh_priority_metadata()
                     self.sync_library()
                     # last_sync_time is already updated inside sync_library()
                     self.force_sync = False
                     self.sync_wake_event.clear()  # Clear the wake event after sync
                     logger.info("Background sync: Library sync complete")
 
+                self.refresh_priority_metadata()
+
                 # Wait 60 seconds or until wake event is set (for manual sync trigger)
                 # Using sync_wake_event.wait with timeout allows immediate response to manual sync
-                self.sync_wake_event.wait(60)
+                self.sync_wake_event.wait(max(1.0, 60 - (time.monotonic() - cycle_started)))
 
             except Exception as e:
                 logger.error(f"Error in sync loop: {e}")
@@ -1541,6 +1556,24 @@ class Scheduler:
                 on_deck_rating_keys=self._collect_on_deck_rating_keys(plex),
             )
 
+            for rating_key in self._collect_active_playback_rating_keys(plex) & missing_rating_keys:
+                add_reason(priority_infos.setdefault(rating_key, PriorityInfo()), "active_playback", 999)
+
+            cached_paths = fully_cached_paths()
+            if cached_paths:
+                with Session(engine) as session:
+                    candidates = session.exec(select(MediaItem).where(
+                        col(MediaItem.id).in_(missing_rating_keys)
+                    )).all()
+                for item in candidates:
+                    if item_is_fully_cached(item, cached_paths):
+                        info = priority_infos.setdefault(item.id, PriorityInfo())
+                        existing_score = info.score
+                        add_reason(info, "fully_cached", FULLY_CACHED_SCORE)
+                        # Keep cached work above the normal score cap, retaining
+                        # other priority signals to order items within this tier.
+                        info.score = FULLY_CACHED_SCORE + existing_score
+
             logger.info(f"Detected {len(priority_infos)} scored priority items total")
             return priority_infos
 
@@ -1640,6 +1673,23 @@ class Scheduler:
         except Exception as e:
             logger.warning(f"Failed to collect on-deck priority items: {e}")
             return set()
+
+    def _collect_active_playback_rating_keys(self, plex) -> set[int]:
+        keys = set()
+        try:
+            for item in retry_plex_call(plex.sessions):
+                if getattr(item, "type", None) not in ("movie", "episode"):
+                    continue
+                players = getattr(item, "players", []) or []
+                if not any(getattr(player, "state", None) in ("playing", "paused", "buffering") for player in players):
+                    continue
+                try:
+                    keys.add(int(item.ratingKey))
+                except (TypeError, ValueError):
+                    continue
+        except Exception:
+            logger.warning("Failed to collect active Plex playback priority")
+        return keys
 
     def _collect_priority_hub_items(self, plex) -> dict[str, list[HubItem]]:
         hub_items_by_title: dict[str, list[HubItem]] = {}
@@ -2304,9 +2354,9 @@ class Scheduler:
         with Session(engine) as session:
             # Fetch MISSING and QUEUED items (QUEUED includes manually queued via "Top" button)
             # Sort queued/manual work first, then scored automatic priority.
-            statement = select(MediaItem).where(
-                col(MediaItem.status).in_([PreviewStatus.MISSING, PreviewStatus.QUEUED])
-            ).order_by(*self._queue_candidate_order_by()).limit(fetch_limit)
+            settings = session.get(AppSettings, 1)
+            starting_full_backlog = bool(settings and settings.full_backlog)
+            statement = self._queue_candidates(session, fetch_limit)
 
             items = session.exec(statement).all()
 
@@ -2377,9 +2427,7 @@ class Scheduler:
 
             with Session(engine) as session:
                 # Fetch MISSING and QUEUED items (QUEUED includes manually queued via "Top" button)
-                statement = select(MediaItem).where(
-                    col(MediaItem.status).in_([PreviewStatus.MISSING, PreviewStatus.QUEUED])
-                ).order_by(*self._queue_candidate_order_by()).limit(current_fetch_limit)
+                statement = self._queue_candidates(session, current_fetch_limit)
 
                 items = session.exec(statement).all()
 
@@ -2424,6 +2472,10 @@ class Scheduler:
         def should_stop():
             if self.paused:
                 return True
+            with Session(engine) as session:
+                settings = session.get(AppSettings, 1)
+                if bool(settings and settings.full_backlog) != starting_full_backlog:
+                    return True
             # When rate-limited, we continue but only process exempt items
             # The actual filtering happens in fetch_more_items
             return False

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 MAX_SCORE = 999
+FULLY_CACHED_SCORE = MAX_SCORE + 1
 ON_DECK_SCORE = 900
 NEXT_EPISODE_SCORES = (800, 760, 720)
 MULTI_USER_BOOST = 75
