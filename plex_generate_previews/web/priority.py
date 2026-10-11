@@ -6,7 +6,8 @@ from typing import Any
 
 MAX_SCORE = 999
 FULLY_CACHED_SCORE = MAX_SCORE + 1
-ACTIVE_PLAYBACK_SCORE = FULLY_CACHED_SCORE * 2
+ACTIVE_NEXT_SCORE = FULLY_CACHED_SCORE * 2
+ACTIVE_PLAYBACK_SCORE = FULLY_CACHED_SCORE * 4
 ON_DECK_SCORE = 900
 NEXT_EPISODE_SCORES = (800, 760, 720)
 MULTI_USER_BOOST = 75
@@ -56,16 +57,41 @@ def add_reason(info: PriorityInfo, reason_type: str, score: int, **metadata: Any
     info.score = min(MAX_SCORE, info.score + score)
 
 
-def set_playback_priority(info: PriorityInfo, active: bool) -> None:
-    info.reasons = [reason for reason in info.reasons if reason.get("type") != "active_playback"]
+def set_playback_priority(info: PriorityInfo, active: bool, next_position: int | None = None) -> None:
+    info.reasons = [reason for reason in info.reasons if reason.get("type") not in ("active_playback", "active_next")]
     if active:
         info.reasons.append({"type": "active_playback", "score": ACTIVE_PLAYBACK_SCORE})
+    if next_position is not None and not active:
+        info.reasons.append({"type": "active_next", "score": ACTIVE_NEXT_SCORE, "position": next_position})
     normal_score = min(MAX_SCORE, sum(
         int(reason.get("score", 0)) for reason in info.reasons
-        if reason.get("type") not in ("active_playback", "fully_cached")
+        if reason.get("type") not in ("active_playback", "active_next", "fully_cached")
     ))
     cached_score = FULLY_CACHED_SCORE if any(reason.get("type") == "fully_cached" for reason in info.reasons) else 0
     info.score = normal_score + cached_score + (ACTIVE_PLAYBACK_SCORE if active else 0)
+    if next_position is not None and not active:
+        # Preserve episode order ahead of cache and historical boosts.
+        info.score = ACTIVE_NEXT_SCORE + (4 - min(next_position, 3)) * 250 + min(249, normal_score)
+
+
+def active_next_episodes(active_keys: set[int], episodes: list[EpisodeRow], eligible_keys: set[int]) -> dict[int, int]:
+    """Choose three distinct episode positions after each active episode."""
+    anchors = [episode for episode in episodes if episode.rating_key in active_keys]
+    result = {}
+    for anchor in anchors:
+        candidates = sorted(
+            (episode for episode in episodes if episode.show_id == anchor.show_id
+             and episode.rating_key in eligible_keys
+             and (episode.season_index, episode.episode_index) > (anchor.season_index, anchor.episode_index)),
+            key=lambda episode: (episode.season_index, episode.episode_index, episode.rating_key),
+        )
+        positions = sorted({(ep.season_index, ep.episode_index) for ep in candidates})[:3]
+        for episode in candidates:
+            position = (episode.season_index, episode.episode_index)
+            if position in positions:
+                rank = positions.index(position) + 1
+                result[episode.rating_key] = min(result.get(episode.rating_key, rank), rank)
+    return result
 
 
 def replace_reason(info: PriorityInfo, reason_type: str, score: int, **metadata: Any) -> None:

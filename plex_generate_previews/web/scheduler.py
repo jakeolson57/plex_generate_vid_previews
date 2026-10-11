@@ -27,6 +27,8 @@ from .priority import (
     RECENT_WATCHED_SCORE,
     FULLY_CACHED_SCORE,
     ACTIVE_PLAYBACK_SCORE,
+    ACTIVE_NEXT_SCORE,
+    active_next_episodes,
     set_playback_priority,
     add_reason,
     build_priority_infos,
@@ -471,6 +473,7 @@ class Scheduler:
     def _queue_candidate_order_by(self):
         return (
             case((MediaItem.priority_score >= ACTIVE_PLAYBACK_SCORE, 0), else_=1),
+            case((MediaItem.priority_score >= ACTIVE_NEXT_SCORE, 0), else_=1),
             case((MediaItem.priority_score >= FULLY_CACHED_SCORE, 0), else_=1),
             case((MediaItem.status == PreviewStatus.QUEUED, 0), else_=1),
             MediaItem.is_priority.desc(),
@@ -1559,9 +1562,10 @@ class Scheduler:
                         ).all()
                     )
 
+            episodes = self._read_priority_episode_rows()
             priority_infos = build_priority_infos(
                 watch_events=self._read_priority_watch_events(history_limit),
-                episodes=self._read_priority_episode_rows(),
+                episodes=episodes,
                 missing_rating_keys=missing_rating_keys,
                 now=datetime.utcnow().replace(tzinfo=timezone.utc),
                 hub_items_by_title=self._collect_priority_hub_items(plex),
@@ -1584,8 +1588,10 @@ class Scheduler:
                         info.score = FULLY_CACHED_SCORE + existing_score
 
             # Fetch playback after the slower hub/cache scan, keeping it current.
-            for rating_key in self._collect_active_playback_rating_keys(plex) & missing_rating_keys:
-                set_playback_priority(priority_infos.setdefault(rating_key, PriorityInfo()), True)
+            active = self._collect_active_playback_rating_keys(plex)
+            following = active_next_episodes(active, episodes, missing_rating_keys)
+            for rating_key in (active & missing_rating_keys) | following.keys():
+                set_playback_priority(priority_infos.setdefault(rating_key, PriorityInfo()), rating_key in active, following.get(rating_key))
 
             logger.info(f"Detected {len(priority_infos)} scored priority items total")
             return priority_infos
@@ -1741,9 +1747,11 @@ class Scheduler:
         active = {item["rating_key"] for item in snapshot["sessions"]}
         statuses = [PreviewStatus.MISSING, PreviewStatus.QUEUED, PreviewStatus.PROCESSING]
         with Session(engine) as session:
+            eligible = set(session.exec(select(MediaItem.id).where(col(MediaItem.status).in_(statuses))).all())
+            following = active_next_episodes(active, self._read_priority_episode_rows(), eligible) if active else {}
             rows = session.exec(select(MediaItem).where(
                 col(MediaItem.status).in_(statuses),
-                or_(col(MediaItem.id).in_(active), col(MediaItem.priority_reasons).contains('"active_playback"')),
+                or_(col(MediaItem.id).in_(active | following.keys()), col(MediaItem.priority_reasons).contains('"active_playback"'), col(MediaItem.priority_reasons).contains('"active_next"')),
             )).all()
             for item in rows:
                 try:
@@ -1753,7 +1761,7 @@ class Scheduler:
                 except ValueError:
                     reasons = []
                 info = PriorityInfo(reasons=reasons)
-                set_playback_priority(info, item.id in active)
+                set_playback_priority(info, item.id in active, following.get(item.id))
                 if self._apply_priority_info_to_item(item, info):
                     session.add(item)
             session.commit()

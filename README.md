@@ -669,7 +669,9 @@ cached in InfiniDysk. The catalogue remains saved; enabling Full backlog makes t
 remaining pending items eligible again. A change takes effect for new work; previews
 already processing finish. Priorities refresh every minute independently of library
 sync. Existing hub selection and the first-20-movies-per-hub limit still apply.
-Active Plex playback ranks first, fully cached InfiniDysk items second, followed by
+While an episode is being watched, the next three episodes needing previews from that show are prioritized above cached-only items, in episode order (including across seasons). They carry a **Watching next** badge. The currently playing item remains first when its own previews are missing. These temporary boosts are removed when playback ends.
+
+Active Plex playback and its next episodes rank first, fully cached InfiniDysk items second, followed by
 Up Next and hubs in both processing modes. Playback priorities refresh every 15
 seconds, independently of the slower hub/cache scan. When playback ends, its boost
 is removed while other priority reasons remain. The dashboard's Currently watching

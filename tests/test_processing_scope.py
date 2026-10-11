@@ -89,7 +89,7 @@ def test_queue_orders_playback_then_cached_then_up_next(db, full_backlog):
         session.add(AppSettings(id=1, full_backlog=full_backlog))
         session.add(movie(1, is_priority=True, priority_score=999, status=PreviewStatus.QUEUED))
         session.add(movie(2, is_priority=True, priority_score=1999, status=PreviewStatus.QUEUED))
-        session.add(movie(3, is_priority=True, priority_score=2000))
+        session.add(movie(3, is_priority=True, priority_score=4000))
         session.commit()
         scheduler = Scheduler()
         assert [item.id for item in session.exec(scheduler._queue_candidates(session, 10)).all()] == [3, 2, 1]
@@ -156,7 +156,7 @@ def test_detection_combines_playback_and_cache_with_existing_sources(db, monkeyp
 def test_playback_tier_preserves_cache_when_session_ends():
     info = PriorityInfo(reasons=[{"type": "on_deck", "score": 900}, {"type": "next_episode", "score": 800}, {"type": "fully_cached", "score": 1000}])
     set_playback_priority(info, True)
-    assert info.score == 3999
+    assert info.score == 5999
     set_playback_priority(info, True)
     assert len([reason for reason in info.reasons if reason["type"] == "active_playback"]) == 1
     set_playback_priority(info, False)
@@ -198,15 +198,16 @@ def test_playback_refresh_promotes_and_demotes_without_dropping_other_sources(db
                           priority_reasons='[{"type":"active_playback","score":2000}]'))
         session.commit()
     monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": True, "sessions": [{"rating_key": 1}]})
+    monkeypatch.setattr(scheduler, "_read_priority_episode_rows", lambda: [])
     scheduler.refresh_active_playback_metadata()
     with Session(db) as session:
-        assert session.get(MediaItem, 1).priority_score == 3000
+        assert session.get(MediaItem, 1).priority_score == 5000
         assert session.get(MediaItem, 2).priority_score == 0
         assert session.get(MediaItem, 2).is_priority is False
     monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": False, "sessions": []})
     scheduler.refresh_active_playback_metadata()
     with Session(db) as session:
-        assert session.get(MediaItem, 1).priority_score == 3000
+        assert session.get(MediaItem, 1).priority_score == 5000
 
 
 def test_cache_catalogue_paginates_and_requires_verified_current_size(monkeypatch):
@@ -292,3 +293,39 @@ def test_sharded_infini_library_link_matches_without_fuse_stat(tmp_path, monkeyp
     monkeypatch.setattr(infini_cache.os.path, "realpath", lambda path: pytest.fail("Unnecessary FUSE stat"))
     assert infini_cache.item_is_fully_cached(movie(1, file_path=str(link)), cached)
     assert not infini_cache.item_is_fully_cached(movie(1, file_path=str(link)), {"/other/cached"})
+
+
+def test_active_show_followups_cross_seasons_deduplicate_versions_and_skip_ready():
+    from plex_generate_previews.web.priority import EpisodeRow, active_next_episodes
+    rows = [EpisodeRow(1, 10, 2, 15), EpisodeRow(2, 10, 2, 16),
+            EpisodeRow(3, 10, 2, 17), EpisodeRow(4, 10, 2, 17),
+            EpisodeRow(5, 10, 3, 1), EpisodeRow(6, 10, 3, 2),
+            EpisodeRow(7, 11, 2, 16)]
+    assert active_next_episodes({1}, rows, {3, 4, 5, 6, 7}) == {3: 1, 4: 1, 5: 2, 6: 3}
+
+
+@pytest.mark.parametrize("full_backlog", [False, True])
+def test_completed_current_episode_promotes_followups_above_cached_and_demotes_on_stop(db, monkeypatch, full_backlog):
+    from plex_generate_previews.web.priority import EpisodeRow
+    scheduler = Scheduler()
+    with Session(db) as session:
+        session.add(AppSettings(id=1, full_backlog=full_backlog))
+        session.add(movie(1, status=PreviewStatus.COMPLETED))
+        session.add(movie(2))
+        session.add(movie(3, is_priority=True, priority_score=1999, status=PreviewStatus.QUEUED))
+        session.add(movie(4, is_priority=True, priority_score=1999,
+                          priority_reasons='[{"type":"fully_cached","score":1000},{"type":"on_deck","score":900}]'))
+        session.commit()
+    monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": True, "sessions": [{"rating_key": 1}]})
+    monkeypatch.setattr(scheduler, "_read_priority_episode_rows", lambda: [EpisodeRow(1, 10, 2, 15), EpisodeRow(2, 10, 2, 16), EpisodeRow(4, 10, 2, 17)])
+    scheduler.refresh_active_playback_metadata()
+    with Session(db) as session:
+        assert [item.id for item in session.exec(scheduler._queue_candidates(session, 10)).all()] == [2, 4, 3]
+        assert session.get(MediaItem, 1).priority_score == 0
+        result = asyncio.run(main.get_items(session=session, user="test"))
+        assert result['items'][0]['id'] == 2
+    monkeypatch.setattr(scheduler, "get_active_playback", lambda: {"available": True, "sessions": []})
+    scheduler.refresh_active_playback_metadata()
+    with Session(db) as session:
+        assert session.get(MediaItem, 2).priority_score == 0
+        assert session.get(MediaItem, 4).priority_score == 1900
