@@ -93,3 +93,11 @@ class MediaItem(SQLModel, table=True):
     last_attempted_at: Optional[datetime] = None # When processing was last attempted
 
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PreviewCompletion(SQLModel, table=True):
+    """Successful generated previews, retained independently of queue metadata."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    media_item_id: int = Field(index=True)
+    title: str
+    completed_at: datetime = Field(default_factory=datetime.utcnow, index=True)

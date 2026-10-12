@@ -121,11 +121,14 @@ def test_stats_include_priority_count(client, session):
     assert response.json()["priority"] == 1
 
 
-def test_dashboard_renders_priority_stat_card():
-    html = Path("plex_generate_previews/web/templates/index.html").read_text()
-
-    assert "Priority" in html
-    assert 'x-text="stats.priority"' in html
+def test_dashboard_renders_priority_stat_card(client, monkeypatch):
+    from plex_generate_previews.web.main import scheduler
+    monkeypatch.setattr(scheduler, "config", object())
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Priority queue" in response.text
+    assert "Completed · last hour" in response.text
+    assert "/static/dashboard.js" in response.text
 
 
 def test_get_items_priority_pagination_uses_total_matching_rows(client, session):

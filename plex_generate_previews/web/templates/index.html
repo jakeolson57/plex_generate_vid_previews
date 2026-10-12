@@ -1,1370 +1,327 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Plex Preview Gen</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <style>
-        body { background-color: #1a1a1a; color: #e5e5e5; }
-        [x-cloak] { display: none !important; }
-        .card { background-color: #2d2d2d; border-radius: 0.5rem; padding: 1.5rem; }
-
-        /* Toast notifications */
-        .toast {
-            position: fixed;
-            top: 1rem;
-            right: 1rem;
-            z-index: 9999;
-            min-width: 200px;
-            max-width: calc(100vw - 2rem);
-            animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(400px);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        @keyframes slideOut {
-            from {
-                transform: translateX(0);
-                opacity: 1;
-            }
-            to {
-                transform: translateX(400px);
-                opacity: 0;
-            }
-        }
-
-        .toast.hiding {
-            animation: slideOut 0.3s ease-in;
-        }
-
-        /* Mobile table as cards */
-        @media (max-width: 767px) {
-            .mobile-cards table,
-            .mobile-cards thead { display: none; }
-        }
-        @media (min-width: 768px) {
-            .mobile-card-view { display: none !important; }
-        }
-    </style>
-</head>
-<body class="container mx-auto px-3 py-4 sm:p-6" x-data="dashboard()">
-    <!-- Toast Notifications Container -->
-    <div class="fixed top-4 right-4 z-50 space-y-2">
-        <template x-for="toast in toasts" :key="toast.id">
-            <div :class="{'bg-green-600': toast.type === 'success', 'bg-blue-600': toast.type === 'info', 'bg-red-600': toast.type === 'error', 'bg-yellow-600': toast.type === 'warning'}"
-                 class="toast rounded-lg shadow-lg p-4 text-white flex items-start space-x-3"
-                 x-show="toast.visible"
-                 x-transition:leave="transition ease-in duration-300"
-                 x-transition:leave-start="opacity-100 transform translate-x-0"
-                 x-transition:leave-end="opacity-0 transform translate-x-full">
-                <div class="flex-shrink-0">
-                    <template x-if="toast.type === 'success'">
-                        <span class="text-2xl">✓</span>
-                    </template>
-                    <template x-if="toast.type === 'error'">
-                        <span class="text-2xl">✗</span>
-                    </template>
-                    <template x-if="toast.type === 'warning'">
-                        <span class="text-2xl">⚠</span>
-                    </template>
-                    <template x-if="toast.type === 'info'">
-                        <span class="text-2xl">ℹ</span>
-                    </template>
-                </div>
-                <div class="flex-1">
-                    <p class="font-semibold" x-text="toast.message"></p>
-                </div>
-                <button @click="removeToast(toast.id)" class="flex-shrink-0 text-white hover:text-gray-200">
-                    <span class="text-xl">×</span>
-                </button>
-            </div>
-        </template>
+{% extends 'base.html' %}{% set page = 'overview' %}{% block content %}
+<main>
+  <div class="page-heading">
+    <div>
+      <div class="eyebrow">Your library, ready to explore</div>
+      <h1>Preview overview</h1>
+      <div class="subtext">
+        Live preview generation across your Plex library.
+      </div>
     </div>
-
-    <!-- Confirmation Dialog -->
-    <div x-show="confirmDialog.show"
-         class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-         x-cloak
-         @click.self="confirmDialog.show = false">
-        <div class="bg-gray-800 rounded-lg p-4 sm:p-6 max-w-md w-full shadow-xl">
-            <h3 class="text-lg sm:text-xl font-bold text-white mb-3 sm:mb-4" x-text="confirmDialog.title"></h3>
-            <p class="text-gray-300 mb-4 sm:mb-6 text-sm sm:text-base" x-text="confirmDialog.message"></p>
-            <div class="flex justify-end gap-2 sm:gap-3">
-                <button @click="confirmDialog.show = false; confirmDialog.onCancel()"
-                        class="px-3 sm:px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm">
-                    Cancel
-                </button>
-                <button @click="confirmDialog.show = false; confirmDialog.onConfirm()"
-                        class="px-3 sm:px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold text-sm">
-                    Confirm
-                </button>
-            </div>
-        </div>
+    <div class="heading-actions">
+      <button class="sync" onclick="syncLibrary()">↻ Sync library</button
+      ><button class="primary" id="pause" onclick="togglePause()">
+        Ⅱ Pause queue
+      </button>
     </div>
-
-    <nav class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-8">
-        <h1 class="text-xl sm:text-2xl font-bold text-orange-500">Plex Preview Generator</h1>
-        <div class="flex flex-wrap items-center gap-2">
-            <span class="text-gray-400 text-sm">User: {{ user }}</span>
-            <a href="/settings" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded text-sm">Settings</a>
-            <a href="/logout" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded text-sm">Logout</a>
-        </div>
-    </nav>
-
-    <!-- Rate Limit Info -->
-    <div x-show="stats.rate_limit && stats.rate_limit.limit_gb > 0" x-cloak
-         class="mb-6 p-4 border rounded-lg flex flex-col md:flex-row items-center justify-between transition-colors duration-500"
-         :class="stats.rate_limit.is_limited ? 'bg-teal-900/30 border-teal-600 text-teal-200' : 'bg-gray-800/50 border-gray-700 text-gray-300'">
-        <div class="flex items-center mb-4 md:mb-0">
-            <svg class="w-6 h-6 mr-3" :class="stats.rate_limit.is_limited ? 'text-teal-400' : 'text-gray-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <div>
-                <p class="font-bold flex items-center">
-                    <span x-text="stats.rate_limit.is_limited ? 'Rate Limit Active' : 'Rate Limit Monitoring'"></span>
-                    <template x-if="!stats.rate_limit.is_limited">
-                        <span class="ml-2 px-2 py-0.5 bg-gray-700 text-gray-400 text-[10px] uppercase rounded">Active</span>
-                    </template>
-                </p>
-                <p class="text-sm" x-text="stats.rate_limit.is_limited ? stats.rate_limit.message : 'Currently processing within hourly quota.'"></p>
-            </div>
-        </div>
-        
-        <div class="flex gap-4 sm:gap-8 text-center md:text-right">
-            <div>
-                <p class="text-[10px] sm:text-xs uppercase font-bold" :class="stats.rate_limit.is_limited ? 'text-teal-400' : 'text-gray-500'">Remaining</p>
-                <p class="text-sm sm:text-lg font-mono font-bold"
-                   :class="stats.rate_limit.remaining_bytes < 0 ? 'text-red-400' : (stats.rate_limit.is_limited ? 'text-teal-300' : 'text-green-400')"
-                   x-text="(stats.rate_limit.remaining_bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'">
-                </p>
-            </div>
-            <div>
-                <p class="text-[10px] sm:text-xs uppercase font-bold" :class="stats.rate_limit.is_limited ? 'text-teal-400' : 'text-gray-500'">Usage</p>
-                <p class="text-sm sm:text-lg font-mono" x-text="(stats.rate_limit.processed_bytes / 1024 / 1024 / 1024).toFixed(2) + ' / ' + stats.rate_limit.limit_gb + ' GB'"></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Stats Grid -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-4 mb-8">
-        <div class="card border-l-4 border-blue-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Total</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.total">0</p>
-        </div>
-        <div class="card border-l-4 border-green-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Completed</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.completed">0</p>
-        </div>
-        <div class="card border-l-4 border-yellow-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Processing</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.processing">0</p>
-        </div>
-        <div class="card border-l-4 border-orange-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Queued</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.queued">0</p>
-        </div>
-        <div class="card border-l-4 border-emerald-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Priority</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.priority">0</p>
-        </div>
-        <div class="card border-l-4 border-red-500 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Missing</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.missing">0</p>
-        </div>
-        <div class="card border-l-4 border-red-700 p-3 sm:p-4">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Failed</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.failed">0</p>
-        </div>
-        <div class="card border-l-4 border-purple-700 p-3 sm:p-4 col-span-2 sm:col-span-1">
-            <h3 class="text-gray-400 text-xs sm:text-sm">Media Missing</h3>
-            <p class="text-xl sm:text-2xl font-bold" x-text="stats.media_missing">0</p>
-        </div>
-    </div>
-
-    <!-- Actions -->
-    <div class="mb-6 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-4">
-        <div class="flex flex-wrap gap-2">
-            <button @click="togglePause" class="flex-1 sm:flex-none px-3 py-2 rounded text-white font-bold transition text-sm" :class="paused ? 'bg-green-600 hover:bg-green-700' : 'bg-yellow-600 hover:bg-yellow-700'">
-                <span x-text="paused ? '▶ Resume' : '⏸ Pause'"></span>
-            </button>
-            <button @click="triggerSync" class="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-sm">Sync</button>
-            <button @click="fetchItems" class="flex-1 sm:flex-none bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded text-sm">Refresh</button>
-        </div>
-
-        <!-- Last Sync Time -->
-        <div class="sm:ml-auto flex flex-col items-start sm:items-end text-xs sm:text-sm text-gray-400 mt-2 sm:mt-0">
-            <div class="flex items-center">
-                <!-- Syncing indicator -->
-                <template x-if="syncInProgress">
-                    <div class="flex items-center text-blue-400">
-                        <svg class="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                        </svg>
-                        <span class="font-medium">Syncing...</span>
-                    </div>
-                </template>
-                <!-- Normal last sync display -->
-                <template x-if="!syncInProgress">
-                    <div class="flex items-center">
-                        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span>Sync: </span>
-                        <span class="ml-1 text-gray-300 font-medium" x-text="lastSyncAgo || 'Never'"></span>
-                    </div>
-                </template>
-            </div>
-            <div x-show="lastSyncSummary && !syncInProgress" class="mt-1 text-xs text-gray-500" x-html="lastSyncSummary"></div>
-        </div>
-    </div>
-
-    <section class="card mb-6 border border-orange-600/40 p-3 sm:p-6" aria-label="Currently watching" x-cloak>
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h2 class="text-base sm:text-xl font-bold">Currently watching <span class="text-sm font-normal text-gray-400" x-text="'(' + playbackSessions.length + ')'" ></span></h2>
-            <span class="text-xs text-orange-300">Highest preview priority</span>
-        </div>
-        <p x-show="playbackLoading" class="text-sm text-gray-400">Checking Plex playback…</p>
-        <p x-show="!playbackLoading && !playbackAvailable" class="text-sm text-gray-400">Plex playback is unavailable. Retrying…</p>
-        <p x-show="!playbackLoading && playbackAvailable && playbackSessions.length === 0" class="text-sm text-gray-400">No active Plex playback.</p>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <template x-for="playing in playbackSessions" :key="playing.id">
-                <article class="min-w-0 bg-gray-800/50 border border-gray-700 rounded-lg p-3 sm:p-4">
-                    <div class="flex flex-wrap items-center gap-2 mb-2">
-                        <span class="text-xs font-semibold text-orange-200 bg-orange-900/40 rounded px-2 py-1" x-text="playing.state === 'paused' ? 'Paused' : (playing.state === 'buffering' ? 'Buffering' : 'Playing')"></span>
-                        <span class="text-xs text-gray-300" x-text="playing.preview_status === 'completed' ? 'Previews ready' : (playing.preview_status ? 'Preview: ' + playing.preview_status.replaceAll('_', ' ') : 'Not in preview catalogue')"></span>
-                    </div>
-                    <p class="font-semibold text-sm sm:text-base break-words" x-text="playing.title"></p>
-                    <p class="text-xs sm:text-sm text-gray-400 mt-1 break-words" x-text="[playing.viewer, playing.device].filter(Boolean).join(' · ')"></p>
-                    <div x-show="playing.duration > 0" class="mt-3">
-                        <div class="h-1.5 bg-gray-700 rounded overflow-hidden" role="progressbar" aria-label="Playback progress" :aria-valuenow="Math.min(100, Math.round(playing.view_offset / playing.duration * 100))" aria-valuemin="0" aria-valuemax="100">
-                            <div class="h-full bg-orange-500 rounded" :style="'width: ' + Math.min(100, playing.view_offset / playing.duration * 100) + '%'"></div>
-                        </div>
-                        <p class="text-xs text-gray-400 mt-1" x-text="formatPlaybackTime(playing.view_offset) + ' / ' + formatPlaybackTime(playing.duration)"></p>
-                    </div>
-                </article>
-            </template>
-        </div>
+  </div>
+  <div class="metric-grid">
+    <section class="metric hero">
+      <div class="metric-label">
+        Completed · last hour
+        <svg
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+        >
+          <use href="#clock" />
+        </svg>
+      </div>
+      <div class="value-row">
+        <div class="value" id="hour">—</div>
+        <div
+          class="chart"
+          id="chart"
+          aria-label="Completions in six ten-minute intervals"
+        ></div>
+      </div>
+      <div class="metric-bottom">
+        <span>Unique items · rolling 60 min</span>
+      </div>
     </section>
-
-    <!-- Library Selector -->
-    <div class="mb-4 sm:mb-6">
-        <label for="library-select" class="block text-gray-400 text-xs sm:text-sm font-bold mb-1.5 sm:mb-2">Library:</label>
-        <select id="library-select" x-model="selectedLibrary" @change="page=1; fetchItems()" class="w-full sm:w-1/2 md:w-1/3 bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none text-sm">
-            <option value="">All Libraries</option>
-            <template x-for="library in libraries" :key="library">
-                <option :value="library" x-text="library"></option>
-            </template>
-        </select>
+    <section class="metric">
+      <div class="metric-label">
+        Completed overall <span style="color: var(--green)">✓</span>
+      </div>
+      <div class="value" id="completed">—</div>
+      <div class="metric-bottom">
+        <span id="library-count">Reading library…</span>
+      </div>
+    </section>
+    <section class="metric">
+      <div class="metric-label">
+        Priority queue <span style="color: var(--accent)">✦</span>
+      </div>
+      <div class="value" id="pending">—</div>
+      <div class="metric-bottom">
+        <span>Waiting for a preview</span
+        ><span id="scope-label" class="chip orange">Priority only</span>
+      </div>
+    </section>
+    <section class="metric">
+      <div class="metric-label">
+        Needs attention <span style="color: var(--muted)">!</span>
+      </div>
+      <div class="value" id="failed">—</div>
+      <div class="metric-bottom">
+        <span>Failed or slow items</span
+        ><button
+          style="
+            padding: 0;
+            border: 0;
+            background: none;
+            color: var(--accent);
+            font-size: 11px;
+          "
+          onclick="setTab('failed')"
+        >
+          Review →
+        </button>
+      </div>
+    </section>
+  </div>
+  <div class="grid">
+    <div>
+      <section class="running">
+        <div class="running-head">
+          <h2>Processing now</h2>
+          <span class="live-label" id="live-state">● Live snapshot</span>
+        </div>
+        <div class="panel" id="processing">
+          <div class="empty">Reading current processing…</div>
+        </div>
+      </section>
+      <div class="watching">
+        <svg
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+        >
+          <use href="#play" /></svg
+        ><span id="watching"
+          >Playback priorities appear at the top of the queue.</span
+        ><span>Playback gets first priority</span>
+      </div>
+      <section class="panel" id="queue">
+        <div class="panel-head">
+          <h2>Up next</h2>
+          <span class="meta" id="queue-caption">Ranked by priority</span>
+        </div>
+        <div class="toolbar">
+          <div class="tabs">
+            <button class="selected" id="tab-all" onclick="setTab('all')">
+              Queue</button
+            ><button id="tab-episode" onclick="setTab('episode')">
+              TV episodes</button
+            ><button id="tab-movie" onclick="setTab('movie')">Movies</button
+            ><button id="tab-failed" onclick="setTab('failed')">Failed</button
+            ><button id="tab-completed" onclick="setTab('completed')">
+              Completed</button
+            ><button id="tab-library" onclick="setTab('library')">
+              All media
+            </button>
+          </div>
+          <div class="filter-group">
+            <select
+              id="library-filter"
+              aria-label="Library"
+              onchange="
+                page = 1;
+                fetchItems();
+              "
+            >
+              <option value="">All libraries</option>
+            </select>
+            <div class="searchbox">
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+              >
+                <use href="#search" /></svg
+              ><input
+                id="queue-search"
+                aria-label="Search media"
+                placeholder="Search your queue…"
+                oninput="searchChanged()"
+              />
+            </div>
+            <select
+              id="source-filter"
+              aria-label="Filter by origin"
+              onchange="
+                page = 1;
+                fetchItems();
+              "
+            >
+              <option value="">All sources</option>
+            </select>
+          </div>
+        </div>
+        <div class="library-tools">
+          <label
+            ><input
+              type="checkbox"
+              id="hide-done"
+              onchange="
+                page = 1;
+                fetchItems();
+              "
+            />
+            Hide completed</label
+          ><label
+            ><input
+              type="checkbox"
+              id="priority-only"
+              onchange="
+                page = 1;
+                fetchItems();
+              "
+            />
+            Priority only</label
+          ><select
+            id="status-filter"
+            aria-label="Status"
+            onchange="
+              page = 1;
+              fetchItems();
+            "
+          >
+            <option value="">All status</option>
+            <option value="missing">Waiting</option>
+            <option value="queued">Queued</option>
+            <option value="processing">Processing</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="slow_failed">Slow failed</option>
+            <option value="media_missing">Media missing</option>
+            <option value="ignored">Ignored</option></select
+          ><select
+            id="sort-filter"
+            aria-label="Sort order"
+            onchange="
+              page = 1;
+              fetchItems();
+            "
+          >
+            <option value="">Priority order</option>
+            <option value="title:asc">Title A–Z</option>
+            <option value="title:desc">Title Z–A</option>
+            <option value="added_at:desc">Newest added</option>
+            <option value="added_at:asc">Oldest added</option>
+            <option value="status:asc">Status</option>
+            <option value="last_attempted_at:desc">Last attempted</option>
+            <option value="avg_speed:desc">Fastest</option>
+            <option value="avg_speed:asc">Slowest</option>
+          </select>
+        </div>
+        <div class="bulk-bar" id="bulk-bar" hidden>
+          <span id="selected-count"></span
+          ><button onclick="bulkAction('move_top')">Move to top</button
+          ><button onclick="bulkAction('reset')">Reset</button
+          ><button onclick="bulkAction('mark_completed')">Mark completed</button
+          ><button onclick="bulkAction('mark_failed')">Mark failed</button
+          ><button
+            onclick="
+              selected.clear();
+              renderRows();
+            "
+          >
+            Clear
+          </button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    id="select-all"
+                    aria-label="Select all items on this page"
+                    onchange="selectAll(this.checked)"
+                  />
+                </th>
+                <th>Title</th>
+                <th>Origin</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows">
+              <tr>
+                <td colspan="5" class="empty">Loading current queue…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span id="row-count">—</span>
+          <div>
+            <button
+              id="prev"
+              onclick="
+                page--;
+                fetchItems();
+              "
+              aria-label="Previous page"
+            >
+              ←
+            </button>
+            <button
+              id="next"
+              onclick="
+                page++;
+                fetchItems();
+              "
+              aria-label="Next page"
+            >
+              →
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
-
-    <!-- Currently Processing Section -->
-    <div x-show="processingItems.length > 0" class="card mb-6 border border-yellow-600/30 p-3 sm:p-6" x-cloak>
-        <div class="flex justify-between items-center mb-3 sm:mb-4">
-            <h2 class="text-base sm:text-xl font-bold flex items-center">
-                <span class="animate-pulse mr-2">⚡</span>
-                Processing
-                <span class="ml-2 text-xs sm:text-sm font-normal text-gray-400">(<span x-text="processingItems.length"></span>)</span>
-            </h2>
+    <div class="sidecol">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Where items come from</h2>
+          <span class="meta">Queue origins</span>
         </div>
-        <div class="space-y-2">
-            <template x-for="item in processingItems" :key="item.id">
-                <div class="bg-gray-800 rounded-lg p-2 sm:p-3"
-                     :class="{'border-l-4 border-yellow-500': item.status === 'processing', 'border-l-4 border-orange-500': item.status === 'queued'}">
-                    <!-- Mobile: stacked layout, Desktop: flex row -->
-                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                                <template x-if="item.is_priority">
-                                    <span class="text-orange-400 text-xs sm:text-sm" title="Priority Item">⭐</span>
-                                </template>
-                                <template x-for="chip in priorityReasonChips(item)" :key="chip.type">
-                                    <span class="px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none"
-                                          :class="priorityReasonClass(chip)"
-                                          :title="priorityReasonTitle(chip)"
-                                          x-text="priorityReasonLabel(chip)"></span>
-                                </template>
-                                <template x-if="plexClientIdentifier">
-                                    <a :href="plexWebUrl(item.id)" target="_blank" class="font-medium hover:text-orange-400 underline text-sm sm:text-base truncate max-w-[200px] sm:max-w-none" x-text="item.title"></a>
-                                </template>
-                                <template x-if="!plexClientIdentifier">
-                                    <span class="font-medium text-sm sm:text-base truncate max-w-[200px] sm:max-w-none" x-text="item.title"></span>
-                                </template>
-                                <span class="hidden sm:inline text-xs text-gray-500 capitalize" x-text="item.media_type"></span>
-                                <span class="hidden sm:inline text-xs text-gray-600">•</span>
-                                <span class="hidden sm:inline text-xs text-gray-500" x-text="item.library_name"></span>
-                            </div>
-                            <div x-show="item.symlink_target" class="hidden sm:block text-[10px] text-blue-400/70 font-mono truncate mt-0.5" x-text="item.symlink_target" :title="item.symlink_target"></div>
-                        </div>
-                        <!-- Progress row on mobile -->
-                        <div class="flex items-center gap-2 sm:gap-4">
-                            <!-- Status Badge -->
-                            <span :class="{
-                                'bg-yellow-900/50 text-yellow-300': item.status === 'processing',
-                                'bg-orange-900/50 text-orange-300': item.status === 'queued'
-                            }" class="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold uppercase" x-text="item.status === 'processing' ? 'proc' : 'queue'"></span>
-
-                            <!-- Worker Type Badge (GPU/CPU) -->
-                            <span x-show="item.processing_worker_type && item.status === 'processing'"
-                                  :class="{
-                                      'bg-green-900/50 text-green-300': item.processing_worker_type === 'GPU',
-                                      'bg-blue-900/50 text-blue-300': item.processing_worker_type === 'CPU'
-                                  }"
-                                  class="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold"
-                                  x-text="item.processing_worker_type"></span>
-
-                            <!-- Progress Bar -->
-                            <div class="flex-1 sm:w-32 min-w-[80px]">
-                                <div class="flex items-center gap-1.5 sm:gap-2">
-                                    <div class="flex-1 bg-gray-600 rounded-full h-1.5 sm:h-2 overflow-hidden">
-                                        <div class="h-full rounded-full transition-all duration-500"
-                                             :class="item.status === 'processing' ? 'bg-yellow-500' : 'bg-orange-500'"
-                                             :style="'width: ' + item.progress + '%'"></div>
-                                    </div>
-                                    <span class="text-[10px] sm:text-xs text-gray-400 w-8 sm:w-10 text-right" x-text="item.progress + '%'"></span>
-                                </div>
-                            </div>
-
-                            <!-- FPS -->
-                            <span x-show="item.current_fps && item.status === 'processing'"
-                                  class="text-[10px] sm:text-xs text-gray-400 w-12 sm:w-14 text-right"
-                                  x-text="item.current_fps ? (item.current_fps.toFixed(1) + ' fps') : ''"></span>
-
-                            <!-- Speed -->
-                            <span class="text-xs sm:text-sm w-10 sm:w-12 text-right"
-                                  x-text="item.avg_speed || '-'"
-                                  :class="{
-                                      'text-green-400': item.avg_speed && parseFloat(item.avg_speed) >= 2.0,
-                                      'text-yellow-400': item.avg_speed && parseFloat(item.avg_speed) >= 1.0 && parseFloat(item.avg_speed) < 2.0,
-                                      'text-orange-400': item.avg_speed && parseFloat(item.avg_speed) >= 0.5 && parseFloat(item.avg_speed) < 1.0,
-                                      'text-red-400': item.avg_speed && parseFloat(item.avg_speed) < 0.5,
-                                      'text-gray-500': !item.avg_speed
-                                  }"></span>
-                        </div>
-                    </div>
-                </div>
-            </template>
+        <div class="source-list" id="sources"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recently completed</h2>
+          <span class="meta">Last hour</span>
         </div>
+        <div class="activity" id="activity">
+          <div class="empty">Loading activity…</div>
+        </div>
+      </section>
     </div>
-
-    <!-- Items Table -->
-    <div class="card overflow-hidden p-3 sm:p-6 mobile-cards">
-        <!-- Bulk Actions Bar -->
-        <div x-show="selectedIds.length > 0" class="mb-4 p-2 sm:p-3 bg-gray-800 rounded border border-gray-600 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-            <div class="text-xs sm:text-sm text-gray-300">
-                <span x-text="selectedIds.length"></span> selected
-            </div>
-            <div class="flex flex-wrap gap-1.5 sm:gap-2 w-full sm:w-auto">
-                <button @click="bulkAction('move_top')" class="flex-1 sm:flex-none text-[10px] sm:text-xs bg-blue-900/50 hover:bg-blue-900 text-blue-200 px-2 sm:px-3 py-1.5 sm:py-2 rounded font-bold">
-                    ▲ Top
-                </button>
-                <button @click="bulkAction('reset')" class="flex-1 sm:flex-none text-[10px] sm:text-xs bg-red-900/50 hover:bg-red-900 text-red-200 px-2 sm:px-3 py-1.5 sm:py-2 rounded font-bold">
-                    ⟳ Reset
-                </button>
-                <button @click="bulkAction('mark_completed')" class="flex-1 sm:flex-none text-[10px] sm:text-xs bg-green-900/50 hover:bg-green-900 text-green-200 px-2 sm:px-3 py-1.5 sm:py-2 rounded font-bold">
-                    ✓ Done
-                </button>
-                <button @click="bulkAction('mark_failed')" class="flex-1 sm:flex-none text-[10px] sm:text-xs bg-red-800/50 hover:bg-red-800 text-red-200 px-2 sm:px-3 py-1.5 sm:py-2 rounded font-bold">
-                    ✗ Fail
-                </button>
-                <button @click="clearSelection" class="flex-1 sm:flex-none text-[10px] sm:text-xs bg-gray-700 hover:bg-gray-600 text-white px-2 sm:px-3 py-1.5 sm:py-2 rounded">
-                    Clear
-                </button>
-            </div>
-        </div>
-
-        <div class="flex flex-col gap-3 mb-4">
-            <h2 class="text-lg sm:text-xl font-bold">Media Items</h2>
-            <div class="flex flex-col sm:flex-row gap-2">
-                <input type="text" x-model="search" @input.debounce.500ms="page=1; fetchItems()" placeholder="Search..." class="bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none text-sm flex-1 sm:flex-none sm:w-40">
-                <select x-model="filterStatus" @change="page=1; fetchItems()" class="bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none text-sm">
-                    <option value="">All Status</option>
-                    <option value="missing">Missing</option>
-                    <option value="queued">Queued</option>
-                    <option value="processing">Processing</option>
-                    <option value="completed">Completed</option>
-                    <option value="failed">Failed</option>
-                    <option value="slow_failed">Slow Failed</option>
-                    <option value="media_missing">Media Missing</option>
-                </select>
-                <div class="flex gap-2">
-                    <label class="flex-1 sm:flex-none flex items-center justify-center bg-gray-700 px-2 sm:px-3 py-2 rounded border border-gray-600 cursor-pointer hover:bg-gray-600 transition">
-                        <input type="checkbox" x-model="hideCompleted" @change="page=1; fetchItems()" class="mr-1.5">
-                        <span class="text-white text-xs sm:text-sm whitespace-nowrap">Hide Done</span>
-                    </label>
-                    <label class="flex-1 sm:flex-none flex items-center justify-center bg-orange-700/30 px-2 sm:px-3 py-2 rounded border border-orange-600/50 cursor-pointer hover:bg-orange-700/50 transition">
-                        <input type="checkbox" x-model="showPriorityOnly" @change="page=1; fetchItems()" class="mr-1.5">
-                        <span class="text-white text-xs sm:text-sm whitespace-nowrap">⭐ Priority</span>
-                    </label>
-                </div>
-            </div>
-        </div>
-        <!-- Mobile Card View -->
-        <div class="mobile-card-view space-y-2">
-            <template x-for="item in items" :key="item.id">
-                <div class="bg-gray-800 rounded-lg p-3 border-l-4"
-                     :class="{
-                         'border-green-500': item.status === 'completed',
-                         'border-yellow-500': item.status === 'processing',
-                         'border-orange-500': item.status === 'queued',
-                         'border-red-500': item.status === 'missing',
-                         'border-red-700': item.status === 'failed',
-                         'border-purple-500': item.status === 'slow_failed',
-                         'border-purple-700': item.status === 'media_missing'
-                     }">
-                    <!-- Header row: checkbox, title, expand -->
-                    <div class="flex items-start gap-2">
-                        <input type="checkbox" :value="item.item_id" @change="toggleSelect(item.item_id)" :checked="selectedIds.includes(item.item_id)" class="cursor-pointer mt-1">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                                <template x-if="item.is_priority">
-                                    <span class="text-orange-400 text-xs">⭐</span>
-                                </template>
-                                <template x-for="chip in priorityReasonChips(item)" :key="chip.type">
-                                    <span class="px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none"
-                                          :class="priorityReasonClass(chip)"
-                                          :title="priorityReasonTitle(chip)"
-                                          x-text="priorityReasonLabel(chip)"></span>
-                                </template>
-                                <template x-if="plexClientIdentifier">
-                                    <a :href="plexWebUrl(item.item_id)" target="_blank" class="font-medium text-sm hover:text-orange-400 underline line-clamp-2" x-text="item.title"></a>
-                                </template>
-                                <template x-if="!plexClientIdentifier">
-                                    <span class="font-medium text-sm line-clamp-2" x-text="item.title"></span>
-                                </template>
-                            </div>
-                            <div class="flex items-center gap-2 mt-1 text-xs text-gray-500">
-                                <span class="capitalize" x-text="item.media_type"></span>
-                                <span>•</span>
-                                <span x-text="item.library_name"></span>
-                            </div>
-                        </div>
-                        <button @click="toggleExpand(item.id)" class="text-gray-400 hover:text-white p-1">
-                            <span x-show="!isExpanded(item.id)">▶</span>
-                            <span x-show="isExpanded(item.id)">▼</span>
-                        </button>
-                    </div>
-                    <!-- Status and progress row -->
-                    <div class="flex items-center gap-3 mt-2">
-                        <span :class="{
-                            'text-green-500': item.status === 'completed',
-                            'text-yellow-500': item.status === 'processing',
-                            'text-orange-500': item.status === 'queued',
-                            'text-red-500': item.status === 'missing',
-                            'text-red-700': item.status === 'failed',
-                            'text-purple-500': item.status === 'slow_failed',
-                            'text-purple-700': item.status === 'media_missing'
-                        }" x-text="item.status.replace('_', ' ')" class="uppercase text-[10px] font-bold bg-gray-900 px-1.5 py-0.5 rounded"></span>
-                        <div class="flex-1 flex items-center gap-2">
-                            <div class="flex-1 bg-gray-600 rounded-full h-1.5 overflow-hidden">
-                                <div class="bg-blue-600 h-full rounded-full transition-all" :style="'width: ' + item.progress + '%'"></div>
-                            </div>
-                            <span class="text-[10px] text-gray-400 w-8" x-text="item.progress + '%'"></span>
-                        </div>
-                        <span class="text-xs w-10 text-right"
-                              x-text="item.avg_speed || '-'"
-                              :class="{
-                                  'text-green-400': item.avg_speed && parseFloat(item.avg_speed) >= 2.0,
-                                  'text-yellow-400': item.avg_speed && parseFloat(item.avg_speed) >= 1.0 && parseFloat(item.avg_speed) < 2.0,
-                                  'text-orange-400': item.avg_speed && parseFloat(item.avg_speed) >= 0.5 && parseFloat(item.avg_speed) < 1.0,
-                                  'text-red-400': item.avg_speed && parseFloat(item.avg_speed) < 0.5
-                              }"></span>
-                    </div>
-                    <!-- Actions row -->
-                    <div class="flex flex-wrap gap-1.5 mt-2">
-                        <template x-if="item.status === 'queued' || item.status === 'missing'">
-                            <button @click="moveItem(item.item_id, 'top')" class="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded">▲ Top</button>
-                        </template>
-                        <template x-if="item.status === 'processing'">
-                            <button @click="moveItem(item.item_id, 'reset')" class="text-[10px] bg-red-900/50 hover:bg-red-900 text-red-200 px-2 py-1 rounded">⟳ Reset</button>
-                        </template>
-                        <template x-if="item.status === 'failed' || item.status === 'slow_failed' || item.status === 'media_missing'">
-                            <button @click="resetToMissing(item.item_id)" class="text-[10px] bg-red-900/50 hover:bg-red-900 text-red-200 px-2 py-1 rounded">⟳ Reset</button>
-                        </template>
-                        <template x-if="item.status === 'completed'">
-                            <button @click="regenerateItem(item.item_id)" class="text-[10px] bg-blue-900/50 hover:bg-blue-900 text-blue-200 px-2 py-1 rounded">⟳ Regen</button>
-                        </template>
-                        <template x-if="item.status !== 'completed' && item.status !== 'failed' && item.status !== 'slow_failed' && item.status !== 'media_missing'">
-                            <button @click="markCompleted(item.item_id)" class="text-[10px] bg-green-900/50 hover:bg-green-900 text-green-200 px-2 py-1 rounded">✓ Done</button>
-                        </template>
-                        <template x-if="item.status !== 'failed' && item.status !== 'slow_failed' && item.status !== 'media_missing'">
-                            <button @click="markFailed(item.item_id)" class="text-[10px] bg-red-800/50 hover:bg-red-800 text-red-200 px-2 py-1 rounded">✗ Fail</button>
-                        </template>
-                    </div>
-                    <!-- Expandable details -->
-                    <div x-show="isExpanded(item.id)" x-collapse class="mt-3 pt-3 border-t border-gray-700 space-y-2 text-xs">
-                        <div class="grid grid-cols-2 gap-2">
-                            <div><span class="text-gray-500">ID:</span> <span x-text="item.item_id"></span></div>
-                            <div><span class="text-gray-500">Part:</span> <span x-text="item.part_index + 1"></span></div>
-                            <div><span class="text-gray-500">Added:</span> <span x-text="formatDate(item.added_at)"></span></div>
-                            <div><span class="text-gray-500">Attempted:</span> <span x-text="formatDate(item.last_attempted_at)"></span></div>
-                            <div><span class="text-gray-500">Updated:</span> <span x-text="formatDate(item.updated_at)"></span></div>
-                        </div>
-                        <div x-show="item.bundle_hash">
-                            <span class="text-gray-500">Bundle:</span>
-                            <span class="font-mono text-[10px] break-all" x-text="item.bundle_hash"></span>
-                        </div>
-                        <div x-show="item.file_path">
-                            <span class="text-gray-500">File:</span>
-                            <div class="font-mono text-[10px] break-all bg-gray-900 p-1.5 rounded mt-1" x-text="item.file_path"></div>
-                        </div>
-                        <div x-show="item.symlink_target">
-                            <span class="text-gray-500">Symlink:</span>
-                            <div class="font-mono text-[10px] break-all bg-gray-900 p-1.5 rounded mt-1 text-blue-300" x-text="item.symlink_target"></div>
-                        </div>
-                        <div x-show="item.error_message && (item.status === 'failed' || item.status === 'slow_failed' || item.status === 'media_missing')" class="bg-red-900/20 border border-red-700 rounded p-2">
-                            <span class="text-red-400 font-bold">Error:</span>
-                            <div class="text-red-300 font-mono text-[10px] break-all mt-1" x-text="item.error_message"></div>
-                        </div>
-                    </div>
-                </div>
-            </template>
-            <div x-show="items.length === 0" class="py-8 text-center text-gray-500">No items found.</div>
-        </div>
-
-        <div class="overflow-x-auto">
-            <table class="w-full text-left">
-                <thead>
-                    <tr class="text-gray-400 border-b border-gray-700">
-                        <th class="pb-2 pl-2 w-10">
-                            <input type="checkbox" @change="toggleSelectAll" :checked="allSelected" class="cursor-pointer">
-                        </th>
-                        <th class="pb-2 w-8"></th>
-                        <th class="pb-2 w-8">#</th>
-                        <th class="pb-2 pl-2 cursor-pointer hover:text-white transition select-none" @click="sortByColumn('title')">
-                            <span class="inline-flex items-center">
-                                Title / File
-                                <span class="ml-1" x-show="sortBy === 'title'">
-                                    <span x-show="sortOrder === 'asc'">↑</span>
-                                    <span x-show="sortOrder === 'desc'">↓</span>
-                                </span>
-                            </span>
-                        </th>
-                        <th class="pb-2">Type</th>
-                        <th class="pb-2">Library</th>
-                        <th class="pb-2 cursor-pointer hover:text-white transition select-none" @click="sortByColumn('added_at')">
-                            <span class="inline-flex items-center">
-                                Added
-                                <span class="ml-1" x-show="sortBy === 'added_at'">
-                                    <span x-show="sortOrder === 'asc'">↑</span>
-                                    <span x-show="sortOrder === 'desc'">↓</span>
-                                </span>
-                            </span>
-                        </th>
-                        <th class="pb-2 cursor-pointer hover:text-white transition select-none" @click="sortByColumn('last_attempted_at')">
-                            <span class="inline-flex items-center">
-                                Attempted
-                                <span class="ml-1" x-show="sortBy === 'last_attempted_at'">
-                                    <span x-show="sortOrder === 'asc'">↑</span>
-                                    <span x-show="sortOrder === 'desc'">↓</span>
-                                </span>
-                            </span>
-                        </th>
-                        <th class="pb-2 cursor-pointer hover:text-white transition select-none" @click="sortByColumn('status')">
-                            <span class="inline-flex items-center">
-                                Status
-                                <span class="ml-1" x-show="sortBy === 'status'">
-                                    <span x-show="sortOrder === 'asc'">↑</span>
-                                    <span x-show="sortOrder === 'desc'">↓</span>
-                                </span>
-                            </span>
-                        </th>
-                        <th class="pb-2">Progress</th>
-                        <th class="pb-2 cursor-pointer hover:text-white transition select-none" @click="sortByColumn('avg_speed')">
-                            <span class="inline-flex items-center">
-                                Speed
-                                <span class="ml-1" x-show="sortBy === 'avg_speed'">
-                                    <span x-show="sortOrder === 'asc'">↑</span>
-                                    <span x-show="sortOrder === 'desc'">↓</span>
-                                </span>
-                            </span>
-                        </th>
-                        <th class="pb-2">Actions</th>
-                    </tr>
-                </thead>
-                <template x-for="item in items" :key="item.id">
-                    <tbody>
-                        <tr class="border-b border-gray-800 hover:bg-gray-700 transition" :class="{'bg-gray-800/30': item.part_index > 0}">
-                            <td class="py-3 pl-2">
-                                <input type="checkbox" :value="item.item_id" @change="toggleSelect(item.item_id)" :checked="selectedIds.includes(item.item_id)" class="cursor-pointer">
-                            </td>
-                            <td class="py-3 pl-2">
-                                <button @click="toggleExpand(item.id)" class="text-gray-400 hover:text-white transition">
-                                    <span x-show="!isExpanded(item.id)">▶</span>
-                                    <span x-show="isExpanded(item.id)">▼</span>
-                                </button>
-                            </td>
-                            <td class="py-3 pl-2 text-xs text-gray-500" x-text="item.part_index + 1"></td>
-                        <td class="py-3 pl-2 font-medium">
-                            <div class="flex items-center gap-2">
-                                <template x-if="item.is_priority">
-                                    <span class="text-orange-400 text-sm" title="Priority Item (On Deck / Recently Played / Adjacent Episode)">⭐</span>
-                                </template>
-                                <template x-for="chip in priorityReasonChips(item)" :key="chip.type">
-                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold leading-none whitespace-nowrap"
-                                          :class="priorityReasonClass(chip)"
-                                          :title="priorityReasonTitle(chip)"
-                                          x-text="priorityReasonLabel(chip)"></span>
-                                </template>
-                                <template x-if="plexClientIdentifier">
-                                    <a :href="plexWebUrl(item.item_id)" target="_blank" class="hover:text-orange-400 underline" x-text="item.title"></a>
-                                </template>
-                                <template x-if="!plexClientIdentifier">
-                                    <span class="text-gray-400" x-text="item.title" title="Plex server not configured - cannot link to app.plex.tv"></span>
-                                </template>
-                            </div>
-                        </td>
-                        <td class="py-3 capitalize text-sm text-gray-400" x-text="item.media_type"></td>
-                        <td class="py-3 text-sm text-gray-400" x-text="item.library_name"></td>
-                        <td class="py-3 text-sm text-gray-400" x-text="formatDate(item.added_at)"></td>
-                        <td class="py-3 text-sm text-gray-400" x-text="formatDate(item.last_attempted_at)"></td>
-                        <td class="py-3">
-                            <span :class="{
-                                'text-green-500': item.status === 'completed',
-                                'text-yellow-500': item.status === 'processing',
-                                'text-orange-500': item.status === 'queued',
-                                'text-red-500': item.status === 'missing',
-                                'text-red-700': item.status === 'failed',
-                                'text-purple-500': item.status === 'slow_failed',
-                                'text-purple-700': item.status === 'media_missing'
-                            }" x-text="item.status.replace('_', ' ')" class="uppercase text-xs font-bold bg-gray-900 px-2 py-1 rounded"></span>
-                        </td>
-                        <td class="py-3 pr-2">
-                            <div class="w-24 bg-gray-600 rounded-full h-2.5 relative overflow-hidden">
-                                <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" :style="'width: ' + item.progress + '%'"></div>
-                            </div>
-                            <span class="text-xs text-gray-400 mt-1 block" x-text="item.progress + '%'"></span>
-                        </td>
-                        <td class="py-3 text-sm text-gray-400">
-                            <span x-text="item.avg_speed || '-'" :class="{
-                                'text-green-400': item.avg_speed && parseFloat(item.avg_speed) >= 2.0,
-                                'text-yellow-400': item.avg_speed && parseFloat(item.avg_speed) >= 1.0 && parseFloat(item.avg_speed) < 2.0,
-                                'text-orange-400': item.avg_speed && parseFloat(item.avg_speed) >= 0.5 && parseFloat(item.avg_speed) < 1.0,
-                                'text-red-400': item.avg_speed && parseFloat(item.avg_speed) < 0.5
-                            }"></span>
-                        </td>
-                        <td class="py-3">
-                            <div class="flex space-x-2">
-                                <template x-if="item.status === 'queued' || item.status === 'missing'">
-                                    <button @click="moveItem(item.item_id, 'top')" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded" title="Move to Top">
-                                        ▲ Top
-                                    </button>
-                                </template>
-                                <template x-if="item.status === 'processing'">
-                                    <button @click="moveItem(item.item_id, 'reset')" class="text-xs bg-red-900/50 hover:bg-red-900 text-red-200 px-2 py-1 rounded" title="Reset Stuck Item">
-                                        ⟳ Reset
-                                    </button>
-                                </template>
-                                <template x-if="item.status === 'failed' || item.status === 'slow_failed' || item.status === 'media_missing'">
-                                    <button @click="resetToMissing(item.item_id)" class="text-xs bg-red-900/50 hover:bg-red-900 text-red-200 px-2 py-1 rounded" title="Reset to Missing">
-                                        ⟳ Reset
-                                    </button>
-                                </template>
-                                <template x-if="item.status === 'completed'">
-                                    <button @click="regenerateItem(item.item_id)" class="text-xs bg-blue-900/50 hover:bg-blue-900 text-blue-200 px-2 py-1 rounded" title="Regenerate Preview">
-                                        ⟳ Regen
-                                    </button>
-                                </template>
-                                <template x-if="item.status !== 'completed' && item.status !== 'failed' && item.status !== 'slow_failed' && item.status !== 'media_missing'">
-                                    <button @click="markCompleted(item.item_id)" class="text-xs bg-green-900/50 hover:bg-green-900 text-green-200 px-2 py-1 rounded" title="Mark as Completed">
-                                        ✓ Done
-                                    </button>
-                                </template>
-                                <template x-if="item.status !== 'failed' && item.status !== 'slow_failed' && item.status !== 'media_missing'">
-                                    <button @click="markFailed(item.item_id)" class="text-xs bg-red-800/50 hover:bg-red-800 text-red-200 px-2 py-1 rounded" title="Mark as Failed">
-                                        ✗ Failed
-                                    </button>
-                                </template>
-                            </div>
-                        </td>
-                    </tr>
-                    <!-- Expandable details row for this part -->
-                    <tr x-show="isExpanded(item.id)" x-collapse class="border-b border-gray-800">
-                        <td colspan="12" class="p-0">
-                            <div class="bg-gray-800 px-6 py-4 border-t border-gray-700">
-                                <div class="space-y-3 text-sm">
-                                    <!-- Item ID and Part Info -->
-                                    <div class="grid grid-cols-3 gap-4">
-                                        <div>
-                                            <span class="text-gray-400 font-semibold">Item ID:</span>
-                                            <span class="text-gray-200 ml-2" x-text="item.item_id"></span>
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 font-semibold">Part Index:</span>
-                                            <span class="text-gray-200 ml-2" x-text="item.part_index + 1"></span>
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 font-semibold">Bundle Hash:</span>
-                                            <span class="text-gray-200 ml-2 font-mono text-xs" x-text="item.bundle_hash || 'N/A'"></span>
-                                        </div>
-                                    </div>
-
-                                    <!-- Error Details (for failed and media_missing items) -->
-                                    <div x-show="item.status === 'failed' || item.status === 'slow_failed'" class="bg-red-900/20 border border-red-700 rounded p-3">
-                                        <h4 class="font-bold text-red-400 mb-2">❌ Error Details:</h4>
-                                        <p class="text-red-300 font-mono text-xs break-all" x-text="item.error_message || 'No error message available'"></p>
-                                    </div>
-                                    <div x-show="item.status === 'media_missing'" class="bg-purple-900/20 border border-purple-700 rounded p-3">
-                                        <h4 class="font-bold text-purple-400 mb-2">⚠️ Media Missing:</h4>
-                                        <p class="text-purple-300 font-mono text-xs break-all" x-text="item.error_message || 'Media file not found (broken symlink or deleted file)'"></p>
-                                    </div>
-
-                                    <!-- File Paths -->
-                                    <div class="space-y-2">
-                                        <!-- Media File Path -->
-                                        <div>
-                                            <span class="text-gray-400 font-semibold">Media File Path:</span>
-                                            <div class="text-gray-200 font-mono text-xs mt-1 break-all bg-gray-900 p-2 rounded" x-text="item.file_path || 'Not yet available'"></div>
-                                        </div>
-
-                                        <!-- Symlink Target -->
-                                        <div x-show="item.symlink_target">
-                                            <span class="text-gray-400 font-semibold">↳ Symlink Target:</span>
-                                            <div class="text-blue-200 font-mono text-xs mt-1 break-all bg-gray-900 p-2 rounded border border-blue-900/50" x-text="item.symlink_target"></div>
-                                        </div>
-
-                                        <!-- BIF File Path -->
-                                        <div>
-                                            <span class="text-gray-400 font-semibold">BIF File Path:</span>
-                                            <div class="font-mono text-xs mt-1 break-all bg-gray-900 p-2 rounded" :class="item.bif_path ? 'text-green-300' : 'text-gray-500'" x-text="item.bif_path || 'Not yet generated'"></div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Processing Info -->
-                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                                        <div>
-                                            <span class="text-gray-400">Progress:</span>
-                                            <span class="text-gray-200 ml-2" x-text="item.progress + '%'"></span>
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400">Media Type:</span>
-                                            <span class="text-gray-200 ml-2 capitalize" x-text="item.media_type"></span>
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400">Library:</span>
-                                            <span class="text-gray-200 ml-2" x-text="item.library_name"></span>
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400">Last Attempt:</span>
-                                            <span class="text-gray-200 ml-2" x-text="formatDateTime(item.updated_at)"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    </tbody>
-                </template>
-                <tbody>
-                    <tr x-show="items.length === 0">
-                        <td colspan="12" class="py-8 text-center text-gray-500">No items found matching your criteria.</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        
-        <!-- Pagination -->
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mt-4 pt-4 border-t border-gray-700">
-            <div class="flex flex-wrap items-center gap-2 sm:gap-4">
-                <span class="text-xs sm:text-sm text-gray-400" x-show="totalPages > 1">
-                    Page <span x-text="page" class="font-bold text-white"></span>/<span x-text="totalPages" class="font-bold text-white"></span>
-                </span>
-                <div class="flex items-center gap-1.5">
-                    <label class="text-xs sm:text-sm text-gray-400">Per page:</label>
-                    <select x-model.number="limit" @change="page=1; fetchItems()" class="bg-gray-700 text-white rounded px-2 py-1 text-xs sm:text-sm">
-                        <option value="10">10</option>
-                        <option value="20">20</option>
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                    </select>
-                </div>
-            </div>
-            <div class="flex gap-2 w-full sm:w-auto" x-show="totalPages > 1">
-                <button @click="page--; fetchItems()" :disabled="page <= 1" class="flex-1 sm:flex-none px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm">Prev</button>
-                <button @click="page++; fetchItems()" :disabled="page >= totalPages" class="flex-1 sm:flex-none px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm">Next</button>
-            </div>
-        </div>
+  </div>
+  <footer class="footer">
+    <div>
+      <span class="statusdot"></span
+      ><span id="freshness">Fetching live data…</span><br /><span
+        id="sync-time"
+      ></span>
     </div>
-
-    <script>
-        function dashboard() {
-            return {
-                stats: { total: 0, completed: 0, processing: 0, queued: 0, missing: 0, failed: 0, priority: 0, media_missing: 0,
-                    rate_limit: { limit_gb: 0, is_limited: false, remaining_bytes: 0, processed_bytes: 0, message: '' } },
-                playbackSessions: [],
-                playbackAvailable: true,
-                playbackLoading: true,
-                items: [],
-                processingItems: [], // Items currently being processed or queued (for the processing section)
-                filterStatus: '',
-                search: '',
-                hideCompleted: false, // Filter to hide completed items
-                showPriorityOnly: false, // Filter to show only priority items
-                libraries: [],
-                selectedLibrary: '', // Stores the currently selected library name
-                sortBy: '', // Column to sort by: added_at, title, avg_speed, status
-                sortOrder: 'desc', // Sort order: asc or desc
-                page: 1,
-                limit: 20,
-                totalPages: 1,
-                paused: false,
-                plexClientIdentifier: '', // Store Plex server's client identifier
-                selectedIds: [], // Track selected item IDs
-                expandedRows: [], // Track which rows are expanded
-                toasts: [], // Toast notifications
-                toastId: 0, // Auto-incrementing toast ID
-                confirmDialog: { // Confirmation dialog state
-                    show: false,
-                    title: '',
-                    message: '',
-                    onConfirm: () => {},
-                    onCancel: () => {}
-                },
-                lastSyncTime: null, // Last sync timestamp from API
-                lastSyncAgo: 'Never', // Relative time string
-                lastSyncSummary: '', // Formatted sync summary
-                syncInProgress: false, // Track if sync is currently running
-
-                get allSelected() {
-                    // Get unique item_ids from current items
-                    const uniqueItemIds = [...new Set(this.items.map(item => item.item_id))];
-                    return uniqueItemIds.length > 0 && this.selectedIds.length === uniqueItemIds.length;
-                },
-
-                // Toast notification methods
-                showToast(message, type = 'info') {
-                    const id = this.toastId++;
-                    const toast = { id, message, type, visible: true };
-                    this.toasts.push(toast);
-
-                    // Auto-remove after 4 seconds
-                    setTimeout(() => {
-                        this.removeToast(id);
-                    }, 4000);
-                },
-
-                removeToast(id) {
-                    const index = this.toasts.findIndex(t => t.id === id);
-                    if (index > -1) {
-                        this.toasts[index].visible = false;
-                        // Remove from array after animation completes
-                        setTimeout(() => {
-                            this.toasts.splice(index, 1);
-                        }, 300);
-                    }
-                },
-
-                // Confirmation dialog methods
-                showConfirm(title, message, onConfirm, onCancel = () => {}) {
-                    this.confirmDialog = {
-                        show: true,
-                        title,
-                        message,
-                        onConfirm,
-                        onCancel
-                    };
-                },
-
-                // Expandable row methods
-                isExpanded(itemId) {
-                    return this.expandedRows.includes(itemId);
-                },
-
-                toggleExpand(itemId) {
-                    const index = this.expandedRows.indexOf(itemId);
-                    if (index > -1) {
-                        this.expandedRows.splice(index, 1);
-                    } else {
-                        this.expandedRows.push(itemId);
-                    }
-                },
-
-                init() {
-                    this.fetchPlayback();
-                    this.fetchStats();
-                    this.fetchItems();
-                    this.fetchProcessingItems(); // Fetch processing items on init
-                    this.fetchQueueStatus();
-                    this.fetchLibraries(); // Fetch libraries on init
-                    this.fetchPlexClientIdentifier(); // Fetch Plex client identifier
-
-                    // Poll stats every 5 seconds
-                    setInterval(() => {
-                        this.fetchStats();
-                        this.fetchQueueStatus();
-                        this.fetchProcessingItems(); // Always refresh processing items
-                        // Only auto-refresh list if processing items exist or we are on page 1 without search
-                        // Otherwise it disturbs pagination/search
-                        if (this.stats.processing > 0) {
-                             this.fetchItems(true); // Silent refresh
-                        }
-                    }, 5000);
-                    setInterval(() => this.fetchPlayback(), 15000);
-
-                    // Update relative time display every 10 seconds
-                    setInterval(() => {
-                        this.updateLastSyncAgo();
-                    }, 10000);
-                },
-                
-                formatDate(dateString) {
-                    if (!dateString) return '-';
-                    return new Date(dateString).toLocaleDateString(undefined, {
-                        year: 'numeric', month: 'short', day: 'numeric'
-                    });
-                },
-
-                formatDateTime(dateString) {
-                    if (!dateString) return '-';
-                    return new Date(dateString).toLocaleString(undefined, {
-                        year: 'numeric', month: 'short', day: 'numeric',
-                        hour: '2-digit', minute: '2-digit'
-                    });
-                },
-
-                priorityReasonChips(item) {
-                    const reasons = Array.isArray(item.priority_reasons) ? item.priority_reasons : [];
-                    if (reasons.length === 0) {
-                        return item.is_priority ? [{ type: 'priority', score: item.priority_score || 0 }] : [];
-                    }
-
-                    const chips = [];
-                    const seen = new Set();
-                    for (const reason of reasons) {
-                        const type = reason.type || 'priority';
-                        const key = type === 'hub' && reason.hub ? `${type}:${reason.hub}` : type;
-                        if (seen.has(key)) continue;
-                        seen.add(key);
-                        chips.push({ ...reason, type });
-                    }
-                    return chips;
-                },
-
-                priorityReasonLabel(chip) {
-                    if (chip.type === 'hub' && chip.hub) return chip.hub;
-
-                    const labels = {
-                        on_deck: 'On deck',
-                        active_playback: 'Watching now',
-                        recent_partial: 'Recently partially watched',
-                        active_next: 'Watching next',
-                        fully_cached: 'InfiniDysk cached',
-                        next_episode: 'Next up',
-                        hub: 'Hub',
-                        multi_user_overlap: 'Multi-user',
-                        priority: 'Priority'
-                    };
-                    return labels[chip.type] || 'Priority';
-                },
-
-                priorityReasonClass(chip) {
-                    const classes = {
-                        on_deck: 'bg-amber-900/50 text-amber-200 border border-amber-700/60',
-                        active_playback: 'bg-red-900/50 text-red-200 border border-red-700/60',
-                        recent_partial: 'bg-orange-900/50 text-orange-200 border border-orange-700/60',
-                        active_next: 'bg-red-900/50 text-red-200 border border-red-700/60',
-                        fully_cached: 'bg-indigo-900/50 text-indigo-200 border border-indigo-700/60',
-                        next_episode: 'bg-sky-900/50 text-sky-200 border border-sky-700/60',
-                        hub: 'bg-emerald-900/50 text-emerald-200 border border-emerald-700/60',
-                        multi_user_overlap: 'bg-fuchsia-900/50 text-fuchsia-200 border border-fuchsia-700/60',
-                        priority: 'bg-gray-700 text-gray-200 border border-gray-600'
-                    };
-                    return classes[chip.type] || classes.priority;
-                },
-
-                priorityReasonTitle(chip) {
-                    const label = this.priorityReasonLabel(chip);
-                    const score = chip.score ? `score +${chip.score}` : 'priority item';
-                    if (chip.type === 'recent_partial') return `Partially watched within the last 7 days (${score})`;
-                    if (chip.type === 'hub' && chip.hub) return `Hub: ${chip.hub} (${score})`;
-                    if (chip.type === 'next_episode' && chip.position) return `${label}: predicted episode ${chip.position} (${score})`;
-                    if (chip.type === 'multi_user_overlap' && chip.user_count) return `${label}: ${chip.user_count} users (${score})`;
-                    return `${label}: ${score}`;
-                },
-
-                updateLastSyncAgo() {
-                    if (!this.lastSyncTime) {
-                        this.lastSyncAgo = 'Never';
-                        return;
-                    }
-
-                    const now = new Date();
-                    const diff = Math.floor((now - this.lastSyncTime) / 1000); // seconds
-
-                    if (diff < 60) {
-                        this.lastSyncAgo = `${diff}s ago`;
-                    } else if (diff < 3600) {
-                        const mins = Math.floor(diff / 60);
-                        this.lastSyncAgo = `${mins}min ago`;
-                    } else if (diff < 86400) {
-                        const hours = Math.floor(diff / 3600);
-                        this.lastSyncAgo = `${hours}hr ago`;
-                    } else {
-                        const days = Math.floor(diff / 86400);
-                        this.lastSyncAgo = `${days}d ago`;
-                    }
-                },
-
-                formatSyncSummary(summaryJson) {
-                    if (!summaryJson) {
-                        this.lastSyncSummary = '';
-                        return;
-                    }
-
-                    try {
-                        const summary = JSON.parse(summaryJson);
-                        const parts = [];
-
-                        // Format movies
-                        if (summary.movies_added > 0) {
-                            parts.push(`${summary.movies_added} movie${summary.movies_added > 1 ? 's' : ''} added`);
-                        }
-                        if (summary.movies_updated > 0) {
-                            parts.push(`${summary.movies_updated} movie${summary.movies_updated > 1 ? 's' : ''} updated`);
-                        }
-                        if (summary.movies_deleted > 0) {
-                            parts.push(`${summary.movies_deleted} movie${summary.movies_deleted > 1 ? 's' : ''} deleted`);
-                        }
-
-                        // Format episodes
-                        if (summary.episodes_added > 0) {
-                            parts.push(`${summary.episodes_added} episode${summary.episodes_added > 1 ? 's' : ''} added`);
-                        }
-                        if (summary.episodes_updated > 0) {
-                            parts.push(`${summary.episodes_updated} episode${summary.episodes_updated > 1 ? 's' : ''} updated`);
-                        }
-                        if (summary.episodes_deleted > 0) {
-                            parts.push(`${summary.episodes_deleted} episode${summary.episodes_deleted > 1 ? 's' : ''} deleted`);
-                        }
-
-                        this.lastSyncSummary = parts.length > 0 ? parts.join(', ') : 'No changes';
-                    } catch (e) {
-                        console.error('Error parsing sync summary:', e);
-                        this.lastSyncSummary = '';
-                    }
-                },
-
-                async fetchPlexClientIdentifier() {
-                    try {
-                        console.log('Fetching Plex client identifier from /api/settings/plex-identifier');
-                        const res = await fetch('/api/settings/plex-identifier');
-                        if (res.ok) {
-                            const data = await res.json();
-                            this.plexClientIdentifier = data.plex_client_identifier;
-                            console.log('Plex client identifier loaded:', this.plexClientIdentifier);
-                        } else {
-                            console.warn("Plex client identifier not configured or accessible. Status:", res.status);
-                        }
-                    } catch (e) {
-                        console.error("Error fetching Plex client identifier:", e);
-                    }
-                },
-
-                plexWebUrl(ratingKey) {
-                    if (!this.plexClientIdentifier) {
-                        console.warn('Plex client identifier not available, cannot generate link for rating key:', ratingKey);
-                        return '#';
-                    }
-                    // Plex web app URL format
-                    // The key parameter needs to be URL-encoded: /library/metadata/{RATING_KEY} becomes %2Flibrary%2Fmetadata%2F{RATING_KEY}
-                    const encodedKey = encodeURIComponent(`/library/metadata/${ratingKey}`);
-                    const url = `https://app.plex.tv/desktop/#!/server/${this.plexClientIdentifier}/details?key=${encodedKey}`;
-                    console.log('Generated Plex URL for rating key', ratingKey, ':', url);
-                    return url;
-                },
-                
-                async fetchLibraries() {
-                    try {
-                        const res = await fetch('/api/libraries');
-                        this.libraries = await res.json();
-                    } catch (e) { console.error(e); }
-                },
-
-                async fetchProcessingItems() {
-                    try {
-                        const res = await fetch('/api/items/processing');
-                        const data = await res.json();
-                        this.processingItems = data.items || [];
-                    } catch (e) { console.error(e); }
-                },
-                
-                async fetchQueueStatus() {
-                    try {
-                        const res = await fetch('/api/queue/status');
-                        const data = await res.json();
-                        // Use database value as source of truth if available, otherwise fall back to memory value
-                        this.paused = data.db_paused !== undefined ? data.db_paused : data.paused;
-                    } catch (e) {}
-                },
-                
-                async togglePause() {
-                    const endpoint = this.paused ? '/api/queue/resume' : '/api/queue/pause';
-                    await fetch(endpoint, { method: 'POST' });
-                    this.fetchQueueStatus();
-                },
-                
-                async fetchPlayback() {
-                    try {
-                        const response = await fetch('/api/playback');
-                        if (!response.ok) throw new Error('Playback unavailable');
-                        const data = await response.json();
-                        this.playbackSessions = data.sessions || [];
-                        this.playbackAvailable = data.available;
-                        if (this.page === 1 && !this.search) this.fetchItems(true);
-                    } catch (error) {
-                        this.playbackSessions = [];
-                        this.playbackAvailable = false;
-                    } finally {
-                        this.playbackLoading = false;
-                    }
-                },
-
-                formatPlaybackTime(milliseconds) {
-                    const seconds = Math.floor(Math.max(0, milliseconds || 0) / 1000);
-                    const hours = Math.floor(seconds / 3600);
-                    const minutes = Math.floor(seconds % 3600 / 60);
-                    const remainder = String(seconds % 60).padStart(2, '0');
-                    return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${remainder}` : `${minutes}:${remainder}`;
-                },
-
-                async fetchStats() {
-                    try {
-                        const res = await fetch('/api/stats');
-                        const data = await res.json();
-                        this.stats = data;
-
-                        // Update sync in progress status
-                        this.syncInProgress = data.sync_in_progress || false;
-
-                        // Update last sync time if available
-                        if (data.last_sync_time) {
-                            this.lastSyncTime = new Date(data.last_sync_time);
-                            this.updateLastSyncAgo();
-                        }
-
-                        // Update sync summary if available
-                        if (data.last_sync_summary) {
-                            this.formatSyncSummary(data.last_sync_summary);
-                        }
-                    } catch (e) { console.error(e); }
-                },
-                
-                async fetchItems(silent = false) {
-                    try {
-                        let url = `/api/items?page=${this.page}&limit=${this.limit}`;
-                        if (this.filterStatus) url += `&status=${this.filterStatus}`;
-                        if (this.search) url += `&search=${encodeURIComponent(this.search)}`;
-                        if (this.selectedLibrary) url += `&library_name=${encodeURIComponent(this.selectedLibrary)}`; // Add library filter
-                        if (this.hideCompleted) url += `&hide_completed=true`; // Add hide completed filter
-                        if (this.showPriorityOnly) url += `&show_priority_only=true`; // Add priority filter
-                        if (this.sortBy) url += `&sort_by=${this.sortBy}&sort_order=${this.sortOrder}`; // Add sorting
-
-                        const res = await fetch(url);
-                        const data = await res.json();
-
-                        // Clear selection if items change (e.g., page change or filter)
-                        if (!silent) {
-                            this.clearSelection();
-                        }
-
-                        this.items = data.items;
-                        this.totalPages = data.pages;
-                    } catch (e) { console.error(e); }
-                },
-
-                sortByColumn(column) {
-                    // If clicking the same column, toggle sort order
-                    if (this.sortBy === column) {
-                        this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-                    } else {
-                        // If clicking a new column, set it and default to desc
-                        this.sortBy = column;
-                        this.sortOrder = 'desc';
-                    }
-                    // Reset to page 1 and fetch with new sort
-                    this.page = 1;
-                    this.fetchItems();
-                },
-
-                clearSort() {
-                    this.sortBy = '';
-                    this.sortOrder = 'desc';
-                    this.page = 1;
-                    this.fetchItems();
-                },
-
-                async triggerSync() {
-                    await fetch('/api/sync', { method: 'POST' });
-                    this.showToast('Sync triggered successfully!', 'success');
-                    this.fetchStats();
-                },
-
-                async moveItem(itemId, position) {
-                    try {
-                        const res = await fetch(`/api/items/${itemId}/move`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ position: position })
-                        });
-                        if (res.ok) {
-                            await this.fetchItems();
-                            await this.fetchStats();
-                        } else {
-                            console.error('Failed to move item:', await res.text());
-                        }
-                    } catch (e) {
-                        console.error('Error moving item:', e);
-                    }
-                },
-
-                async regenerateItem(itemId) {
-                    this.showConfirm(
-                        'Regenerate Previews',
-                        'Are you sure you want to regenerate previews for this item?',
-                        async () => {
-                            try {
-                                const res = await fetch(`/api/items/${itemId}/regenerate`, {
-                                    method: 'POST'
-                                });
-                                if (res.ok) {
-                                    this.showToast('Item queued for regeneration', 'success');
-                                    await this.fetchItems();
-                                    await this.fetchStats();
-                                } else {
-                                    this.showToast('Failed to regenerate item', 'error');
-                                    console.error('Failed to regenerate item:', await res.text());
-                                }
-                            } catch (e) {
-                                this.showToast('Error regenerating item', 'error');
-                                console.error('Error regenerating item:', e);
-                            }
-                        }
-                    );
-                },
-
-                async markCompleted(itemId) {
-                    try {
-                        const res = await fetch(`/api/items/${itemId}/mark-completed`, {
-                            method: 'POST'
-                        });
-                        if (res.ok) {
-                            await this.fetchItems();
-                            await this.fetchStats();
-                        } else {
-                            console.error('Failed to mark item completed:', await res.text());
-                        }
-                    } catch (e) {
-                        console.error('Error marking item completed:', e);
-                    }
-                },
-
-                async resetToMissing(itemId) {
-                    try {
-                        const res = await fetch(`/api/items/${itemId}/reset-to-missing`, {
-                            method: 'POST'
-                        });
-                        if (res.ok) {
-                            await this.fetchItems();
-                            await this.fetchStats();
-                        } else {
-                            console.error('Failed to reset item:', await res.text());
-                        }
-                    } catch (e) {
-                        console.error('Error resetting item:', e);
-                    }
-                },
-
-                async markFailed(itemId) {
-                    try {
-                        const res = await fetch(`/api/items/${itemId}/mark-failed`, {
-                            method: 'POST'
-                        });
-                        if (res.ok) {
-                            await this.fetchItems();
-                            await this.fetchStats();
-                        } else {
-                            console.error('Failed to mark item as failed:', await res.text());
-                        }
-                    } catch (e) {
-                        console.error('Error marking item as failed:', e);
-                    }
-                },
-
-                toggleSelect(itemId) {
-                    const index = this.selectedIds.indexOf(itemId);
-                    if (index > -1) {
-                        this.selectedIds.splice(index, 1);
-                    } else {
-                        this.selectedIds.push(itemId);
-                    }
-                },
-
-                toggleSelectAll() {
-                    if (this.allSelected) {
-                        this.selectedIds = [];
-                    } else {
-                        // Select unique item_ids (not composite part ids)
-                        this.selectedIds = [...new Set(this.items.map(item => item.item_id))];
-                    }
-                },
-
-                clearSelection() {
-                    this.selectedIds = [];
-                },
-
-                async bulkAction(action) {
-                    if (this.selectedIds.length === 0) {
-                        return;
-                    }
-
-                    const actionText = action === 'reset' ? 'reset to missing' :
-                                      action === 'mark_completed' ? 'mark as completed' :
-                                      action === 'move_top' ? 'move to top of queue' :
-                                      'mark as failed';
-
-                    this.showConfirm(
-                        'Bulk Action',
-                        `Are you sure you want to ${actionText} ${this.selectedIds.length} item(s)?`,
-                        async () => {
-                            try {
-                                const res = await fetch('/api/items/bulk-action', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        item_ids: this.selectedIds,
-                                        action: action
-                                    })
-                                });
-
-                                if (res.ok) {
-                                    const data = await res.json();
-                                    this.showToast(data.message, 'success');
-                                    this.clearSelection();
-                                    await this.fetchItems();
-                                    await this.fetchStats();
-                                } else {
-                                    console.error('Failed to perform bulk action:', await res.text());
-                                    this.showToast('Failed to perform bulk action', 'error');
-                                }
-                            } catch (e) {
-                                console.error('Error performing bulk action:', e);
-                                this.showToast('Error performing bulk action', 'error');
-                            }
-                        }
-                    );
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+    <div>
+      Hourly completions count unique generated items.<br /><span
+        id="rate-limit"
+      ></span>
+    </div>
+  </footer>
+</main>
+{% endblock %}{% block scripts %}
+<script src="/static/dashboard.js?v=2"></script>
+{% endblock %}

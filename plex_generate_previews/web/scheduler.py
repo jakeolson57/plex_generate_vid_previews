@@ -18,6 +18,7 @@ from ..gpu_detection import detect_all_gpus
 from ..utils import setup_working_directory, sanitize_path
 from .database import engine, get_session
 from .models import MediaItem, PreviewStatus, MediaType, AppSettings
+from .overview import record_completion
 from .infini_cache import fully_cached_paths, item_is_fully_cached, cached_part_paths
 from .resume_priority import ResumeStateError, recent_partial_rating_keys
 from .priority import (
@@ -110,7 +111,9 @@ class DbProgressManager:
                         logger.warning(f"DbProgressManager: Item {item_key} not found in database")
                         return
 
+                    previous_status = item.status
                     self._apply_update_to_item(item, data)
+                    record_completion(session, item, previous_status, data)
                     session.add(item)
                     session.commit()
                     return  # Success

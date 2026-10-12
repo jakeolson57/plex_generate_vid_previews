@@ -1,0 +1,240 @@
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.back-link {
+  text-decoration: none;
+}
+.tabs {
+  overflow-x: auto;
+}
+.library-tools {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 21px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.library-tools label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.library-tools input[type="checkbox"],
+td input[type="checkbox"],
+th input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.bulk-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  background: var(--accent-soft);
+}
+.bulk-bar[hidden] {
+  display: none;
+}
+.bulk-bar button {
+  font-size: 10px;
+  padding: 6px 8px;
+}
+.row-link {
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 0;
+  font-weight: 550;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.row-link:hover {
+  color: var(--accent);
+  background: none;
+}
+.row-detail {
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-more {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  max-width: 760px;
+  width: calc(100% - 36px);
+  max-height: 85vh;
+  padding: 26px;
+  overflow: auto;
+}
+dialog::backdrop {
+  background: #0009;
+  backdrop-filter: blur(3px);
+}
+dialog h2 {
+  font-size: 19px;
+  margin: 10px 0 16px;
+}
+dialog p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 22px;
+}
+.details-grid {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 11px;
+  margin: 20px 0;
+}
+.details-grid dt {
+  color: var(--muted);
+}
+.details-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.item-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.item-actions button {
+  font-size: 11px;
+}
+.details-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--bg);
+  padding: 15px;
+  border-radius: 7px;
+}
+.playback-card {
+  padding: 15px 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.playback-card p {
+  font-size: 11px;
+  color: var(--muted);
+}
+.operation-result:not(:empty) {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 15px;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 18px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.filter-group {
+  flex-wrap: wrap;
+}
+.filter-group select {
+  max-width: 170px;
+}
+.metric-bottom {
+  gap: 6px;
+}
+#app-dialog .dialog-actions {
+  margin-top: 20px;
+}
+.save-bar {
+  margin-bottom: 35px;
+}
+.settings-main .setting-card:last-child {
+  margin-bottom: 30px;
+}
+.settings-main .save-description {
+  margin-left: 14px;
+}
+.running .processing-card {
+  flex-wrap: wrap;
+}
+.processing-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 600px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.rate-warning {
+  color: var(--accent);
+}
+@media (max-width: 540px) {
+  .filter-group select {
+    max-width: 130px;
+  }
+  .table-wrap td:nth-child(6) {
+    grid-column: 2;
+    grid-row: 3;
+    padding: 0 8px 12px;
+  }
+  .row-detail {
+    max-width: 250px;
+  }
+  .library-tools {
+    padding: 12px;
+    gap: 10px;
+  }
+  .library-tools select {
+    max-width: 135px;
+  }
+  .details-grid {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+  .bulk-bar {
+    padding: 12px;
+  }
+  .bulk-bar span {
+    width: 100%;
+  }
+  .process-info {
+    min-width: 0;
+  }
+  .filter-group .searchbox {
+    min-width: 150px;
+  }
+  .process-stats {
+    margin-left: 0;
+    width: 100%;
+  }
+  .processing-path {
+    max-width: 260px;
+  }
+  .tabs {
+    max-width: 100%;
+  }
+}

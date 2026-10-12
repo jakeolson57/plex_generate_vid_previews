@@ -1,712 +1,620 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Settings - Plex Preview Gen</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <style>
-        body { background-color: #1a1a1a; color: #e5e5e5; }
-        [x-cloak] { display: none !important; }
-        .card { background-color: #2d2d2d; border-radius: 0.5rem; padding: 1rem; }
-        @media (min-width: 640px) {
-            .card { padding: 1.5rem; }
-        }
-    </style>
-</head>
-<body class="container mx-auto p-4 sm:p-6" x-data="settings()">
-    <nav class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6 sm:mb-8">
-        <div class="flex items-center space-x-3 sm:space-x-4">
-            <a href="/" class="text-gray-400 hover:text-white">
-                <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            </a>
-            <h1 class="text-xl sm:text-2xl font-bold text-orange-500">Settings</h1>
-        </div>
-        <div class="flex items-center gap-2 sm:gap-4">
-            <span class="text-gray-400 text-sm">User: {{ user }}</span>
-            <a href="/logout" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded text-sm">Logout</a>
-        </div>
-    </nav>
-
-    <div class="max-w-2xl mx-auto space-y-6">
-        
-        <!-- Worker Configuration -->
-        <div class="card">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-gray-700">Performance</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">GPU Threads</label>
-                    <input type="number" x-model="config.gpu_threads" class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Number of concurrent GPU tasks.</p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">CPU Threads</label>
-                    <input type="number" x-model="config.cpu_threads" class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Number of concurrent CPU tasks (fallback).</p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">Sync Interval (hours)</label>
-                    <input type="number" x-model.number="syncIntervalHours" min="1" max="168" class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">How often to sync library from Plex (1-168 hours).</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Security -->
-        <div class="card">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-gray-700">Security</h2>
-            <div>
-                <label class="block text-gray-400 text-sm font-bold mb-2">New Admin Password</label>
-                <input
-                    type="password"
-                    x-model="newPassword"
-                    @input="checkPasswordLength()"
-                    maxlength="72"
-                    placeholder="Leave blank to keep current"
-                    class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none"
-                    :class="{ 'border-yellow-500': passwordWarning }">
-                <p class="text-xs mt-1" :class="passwordWarning ? 'text-yellow-400' : 'text-gray-500'">
-                    <span x-show="!passwordWarning">Overrides the environment variable password. Max 72 characters.</span>
-                    <span x-show="passwordWarning">⚠️ Password will be truncated to 72 characters for security compatibility.</span>
-                </p>
-            </div>
-        </div>
-
-        <!-- Mount Protection -->
-        <div class="card border border-yellow-900 bg-yellow-900/10">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-yellow-900 text-yellow-400">Mount Protection</h2>
-            <p class="text-sm text-gray-400 mb-4">Protect against processing when media folders are unmounted (e.g., rclone crashes, NAS offline).</p>
-            <div class="space-y-4">
-                <div>
-                    <label class="flex items-center cursor-pointer">
-                        <input type="checkbox" x-model="config.mount_check_enabled" class="mr-2 w-4 h-4">
-                        <span class="text-gray-300">Enable Mount Validation</span>
-                    </label>
-                    <p class="text-xs text-gray-500 mt-1 ml-6">Check mount paths before syncing and processing.</p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">Mount Check Paths</label>
-                    <input
-                        type="text"
-                        x-model="config.mount_check_paths"
-                        placeholder="/mnt/media/.mounted,/data/.marker"
-                        class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Comma-separated paths to validate. Create marker files (e.g., <code>.mounted</code>) in your mount directories.</p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">Failure Threshold (%)</label>
-                    <input
-                        type="number"
-                        x-model.number="config.mount_failure_threshold"
-                        min="1"
-                        max="100"
-                        step="0.1"
-                        class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">If more than this % of items suddenly become missing, abort sync and pause queue (default: 50%).</p>
-                </div>
-                <div class="pt-2">
-                    <button @click="testMounts" :disabled="testingMounts" class="w-full sm:w-auto bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded transition flex items-center justify-center text-sm">
-                        <span x-show="!testingMounts">Test Mount Validation</span>
-                        <span x-show="testingMounts" class="flex items-center">
-                            <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                            Testing...
-                        </span>
-                    </button>
-                    <div x-show="mountTestResult" x-transition class="mt-3 p-3 rounded" :class="mountTestSuccess ? 'bg-green-900/30 text-green-200' : 'bg-red-900/30 text-red-200'">
-                        <p x-text="mountTestResult"></p>
-                        <ul x-show="mountTestMissingPaths && mountTestMissingPaths.length > 0" class="mt-2 ml-4 list-disc text-xs">
-                            <template x-for="path in mountTestMissingPaths" :key="path">
-                                <li x-text="path"></li>
-                            </template>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2 class="text-lg sm:text-xl font-bold mb-4">Processing scope</h2>
-            <label class="flex items-center cursor-pointer">
-                <input type="checkbox" x-model="config.full_backlog" class="mr-2 w-4 h-4">
-                <span class="text-gray-300">Full backlog</span>
-            </label>
-            <p class="text-sm text-gray-400 mt-2">When off, process only active Plex playback, Up Next priorities, Plex hub priorities, and fully cached InfiniDysk items. Sources refresh every minute. Existing work finishes; other items stay saved for later.</p>
-        </div>
-
-        <!-- Multi-User Priority -->
-        <div class="card border border-purple-900 bg-purple-900/10">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-purple-900 text-purple-400">Multi-User Priority</h2>
-            <p class="text-sm text-gray-400 mb-4">Enable priority detection for all users on the server (requires server owner/admin token).</p>
-            <div class="space-y-4">
-                <div>
-                    <label class="flex items-center cursor-pointer">
-                        <input type="checkbox" x-model="config.enable_multi_user_priority" class="mr-2 w-4 h-4">
-                        <span class="text-gray-300">Enable Multi-User Priority Detection</span>
-                    </label>
-                    <p class="text-xs text-gray-500 mt-1 ml-6">
-                        When enabled, priority queue includes on-deck and recently watched items from <strong>all users</strong> on the server.
-                        <br>When disabled (default), only the authenticated user's watch history is used.
-                    </p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">History Items Per User</label>
-                    <input
-                        type="number"
-                        x-model.number="config.priority_history_limit"
-                        min="10"
-                        max="200"
-                        step="10"
-                        class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Number of recently watched items to check per user (default: 50). Higher values may slow down sync.</p>
-                </div>
-                <div class="bg-purple-900/20 border border-purple-800 rounded p-3 mt-4">
-                    <p class="text-xs text-purple-200">
-                        <strong>⚠️ Note:</strong> Multi-user mode requires your Plex token to have server owner/admin privileges.
-                        If enabled but your token lacks permissions, it will automatically fall back to single-user mode.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Rate Limiting -->
-        <div class="card border border-teal-900 bg-teal-900/10">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-teal-900 text-teal-400">Data Rate Limiting</h2>
-            <p class="text-sm text-gray-400 mb-4">Limit the amount of data processed per hour to avoid hitting Usenet provider or storage rate limits.</p>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">Hourly Data Limit (GB/hr)</label>
-                    <input
-                        type="number"
-                        x-model.number="config.data_limit_gb_per_hour"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0 for unlimited"
-                        class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Maximum GB of media to process per hour. Set to 0 for no limit.</p>
-                </div>
-                <div>
-                    <label class="block text-gray-400 text-sm font-bold mb-2">Rate Limit Exempt Paths</label>
-                    <input
-                        type="text"
-                        x-model="config.rate_limit_exempt_paths"
-                        placeholder="/mnt/remote/nzbdav,/mnt/local"
-                        class="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-orange-500 focus:outline-none">
-                    <p class="text-xs text-gray-500 mt-1">Comma-separated paths exempt from rate limiting. Files (or symlink targets) under these paths are processed without counting toward the hourly limit.</p>
-                </div>
-                <div class="bg-teal-900/20 border border-teal-800 rounded p-3 mt-4">
-                    <p class="text-xs text-teal-200">
-                        <strong>💡 Tip:</strong> Use this to exempt local storage or fast providers (e.g., NZBDav) while rate-limiting slower ones (e.g., Real-Debrid).
-                        When the rate limit is reached, exempt files continue processing while rate-limited files are skipped until quota resets.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Maintenance -->
-        <div class="card border border-blue-900 bg-blue-900/10">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-blue-900 text-blue-400">Maintenance</h2>
-            <div class="space-y-4">
-                <!-- Discover Existing BIFs -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-4 border-b border-blue-800">
-                    <div class="flex-1">
-                        <h3 class="font-bold text-blue-300 text-sm sm:text-base">Discover Existing BIFs</h3>
-                        <p class="text-xs sm:text-sm text-gray-400">Scans MISSING items to find pre-existing BIF files.</p>
-                    </div>
-                    <button @click="discoverExisting" :disabled="discovering" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded transition flex items-center justify-center text-sm">
-                        <span x-show="!discovering">Scan Missing</span>
-                        <span x-show="discovering" class="flex items-center">
-                            <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                            Scanning...
-                        </span>
-                    </button>
-                </div>
-                <div x-show="discoverResult" x-transition class="p-3 rounded bg-green-900/30 text-green-200" x-text="discoverResult"></div>
-
-                <!-- Full BIF Scan -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-4 border-t border-blue-800">
-                    <div class="flex-1">
-                        <h3 class="font-bold text-blue-300 text-sm sm:text-base">Full BIF Scan</h3>
-                        <p class="text-xs sm:text-sm text-gray-400">Scans the full Plex bundle tree and reports existing BIF files.</p>
-                    </div>
-                    <button @click="scanAllBifs" :disabled="scanningAllBifs" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded transition flex items-center justify-center text-sm">
-                        <span x-show="!scanningAllBifs">Full Scan</span>
-                        <span x-show="scanningAllBifs" class="flex items-center">
-                            <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                            Scanning...
-                        </span>
-                    </button>
-                </div>
-                <div x-show="fullBifScanResult" x-transition class="p-3 rounded bg-indigo-900/30 text-indigo-200">
-                    <div x-html="fullBifScanResult"></div>
-                </div>
-
-                <!-- Verify Completed -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-4">
-                    <div class="flex-1">
-                        <h3 class="font-bold text-blue-300 text-sm sm:text-base">Verify Completed Items</h3>
-                        <p class="text-xs sm:text-sm text-gray-400">Verifies BIF files exist for completed items.</p>
-                    </div>
-                    <div class="flex gap-2 w-full sm:w-auto">
-                        <button @click="debugVerify" class="flex-1 sm:flex-none bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded transition text-sm">
-                            Debug
-                        </button>
-                        <button @click="verifyCompleted" :disabled="verifying" class="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-3 sm:px-4 rounded transition flex items-center justify-center text-sm">
-                            <span x-show="!verifying">Verify</span>
-                            <span x-show="verifying" class="flex items-center">
-                                <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                                ...
-                            </span>
-                        </button>
-                    </div>
-                </div>
-                <div x-show="verifyResult" x-transition class="p-3 rounded bg-blue-900/30 text-blue-200" x-text="verifyResult"></div>
-
-                <!-- Reset Failed Items -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-4 border-t border-blue-800">
-                    <div class="flex-1">
-                        <h3 class="font-bold text-blue-300 text-sm sm:text-base">Reset Failed Items</h3>
-                        <p class="text-xs sm:text-sm text-gray-400">Resets FAILED items to MISSING for reprocessing.</p>
-                    </div>
-                    <button @click="resetFailed" :disabled="resettingFailed" class="w-full sm:w-auto bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded transition flex items-center justify-center text-sm">
-                        <span x-show="!resettingFailed">Reset Failed</span>
-                        <span x-show="resettingFailed" class="flex items-center">
-                            <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                            Resetting...
-                        </span>
-                    </button>
-                </div>
-                <div x-show="resetFailedResult" x-transition class="p-3 rounded bg-orange-900/30 text-orange-200" x-text="resetFailedResult"></div>
-
-                <!-- Cleanup Orphaned Bundles -->
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-4 border-t border-blue-800">
-                    <div class="flex-1">
-                        <h3 class="font-bold text-blue-300 text-sm sm:text-base">Cleanup Orphaned Bundles</h3>
-                        <p class="text-xs sm:text-sm text-gray-400">Removes bundle directories for deleted media.</p>
-                    </div>
-                    <div class="flex gap-2 w-full sm:w-auto">
-                        <button @click="cleanupOrphaned(true)" :disabled="cleaningUp" class="flex-1 sm:flex-none bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white font-bold py-2 px-3 rounded transition flex items-center justify-center text-sm">
-                            <span x-show="!cleaningUp">🔍 Dry Run</span>
-                            <span x-show="cleaningUp" class="flex items-center">
-                                <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
-                                ...
-                            </span>
-                        </button>
-                        <button @click="cleanupOrphaned(false)" :disabled="cleaningUp" class="flex-1 sm:flex-none bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white font-bold py-2 px-3 rounded transition flex items-center justify-center text-sm">
-                            <span x-show="!cleaningUp">🗑️ Delete</span>
-                            <span x-show="cleaningUp" class="flex items-center">
-                                <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
-                                ...
-                            </span>
-                        </button>
-                    </div>
-                </div>
-                <div x-show="cleanupResult" x-transition class="p-3 rounded bg-blue-900/30 text-blue-200">
-                    <div x-html="cleanupResult"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Danger Zone -->
-        <div class="card border border-red-900 bg-red-900/10">
-            <h2 class="text-lg sm:text-xl font-bold mb-4 pb-2 border-b border-red-900 text-red-500">Danger Zone</h2>
-            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div class="flex-1">
-                    <h3 class="font-bold text-red-400 text-sm sm:text-base">Reset Library Database</h3>
-                    <p class="text-xs sm:text-sm text-gray-400">Deletes all local records and triggers full resync.</p>
-                </div>
-                <button @click="resetLibrary" class="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition text-sm">
-                    Reset & Resync
-                </button>
-            </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="flex justify-end">
-            <button @click="saveSettings" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-6 rounded transition flex items-center justify-center text-sm sm:text-base">
-                <span x-show="!saving">Save Changes</span>
-                <span x-show="saving" class="flex items-center">
-                    <span class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></span>
-                    Saving...
-                </span>
-            </button>
-        </div>
-        
-        <div x-show="message" x-transition class="p-4 rounded" :class="isError ? 'bg-red-900 text-red-200' : 'bg-green-900 text-green-200'" x-text="message"></div>
-
+{% extends 'base.html' %}{% set page = 'settings' %}{% block title %}Settings ·
+Plex Previews{% endblock %}{% block styles %}<link
+  rel="stylesheet"
+  href="/static/settings.css?v=2"
+/>{% endblock %}{% block content %}
+<main class="settings-main">
+  <div class="page-heading">
+    <div>
+      <div class="eyebrow">Workspace preferences</div>
+      <h1>Settings</h1>
+      <div class="subtext">
+        Configure how previews are selected, processed, and protected.
+      </div>
     </div>
-
-    <script>
-        function settings() {
-            return {
-                config: {
-                    gpu_threads: 1,
-                    cpu_threads: 1,
-                    sync_interval: 21600,
-                    mount_check_enabled: true,
-                    mount_check_paths: '',
-                    mount_failure_threshold: 50.0,
-                    enable_multi_user_priority: false,
-                    priority_history_limit: 50,
-                    full_backlog: false,
-                    data_limit_gb_per_hour: 0.0,
-                    rate_limit_exempt_paths: ''
-                },
-                syncIntervalHours: 6,  // Default to 6 hours
-                newPassword: '',
-                passwordWarning: false,
-                saving: false,
-                message: '',
-                isError: false,
-                discovering: false,
-                discoverResult: '',
-                scanningAllBifs: false,
-                fullBifScanResult: '',
-                verifying: false,
-                verifyResult: '',
-                resettingFailed: false,
-                resetFailedResult: '',
-                cleaningUp: false,
-                cleanupResult: '',
-                testingMounts: false,
-                mountTestResult: '',
-                mountTestSuccess: false,
-                mountTestMissingPaths: [],
-
-                async init() {
-                    try {
-                        const res = await fetch('/api/settings');
-                        this.config = await res.json();
-                        // Convert seconds to hours for display
-                        this.syncIntervalHours = Math.round(this.config.sync_interval / 3600);
-                    } catch (e) { console.error(e); }
-                },
-
-                checkPasswordLength() {
-                    // Check if password exceeds 72 bytes in UTF-8
-                    const byteLength = new TextEncoder().encode(this.newPassword).length;
-                    this.passwordWarning = byteLength > 72;
-                },
-
-                async testMounts() {
-                    this.testingMounts = true;
-                    this.mountTestResult = '';
-                    this.mountTestSuccess = false;
-                    this.mountTestMissingPaths = [];
-
-                    try {
-                        const res = await fetch('/api/settings/validate-mounts', { method: 'POST' });
-                        const data = await res.json();
-
-                        this.mountTestResult = data.message;
-                        this.mountTestSuccess = data.valid;
-                        this.mountTestMissingPaths = data.missing_paths || [];
-                    } catch (e) {
-                        this.mountTestResult = `Error: ${e.message}`;
-                        this.mountTestSuccess = false;
-                    } finally {
-                        this.testingMounts = false;
-                    }
-                },
-
-                async saveSettings() {
-                    this.saving = true;
-                    this.message = '';
-                    this.isError = false;
-
-                    try {
-                        const payload = {
-                            gpu_threads: this.config.gpu_threads,
-                            cpu_threads: this.config.cpu_threads,
-                            sync_interval: this.syncIntervalHours * 3600,  // Convert hours to seconds
-                            new_password: this.newPassword,
-                            mount_check_enabled: this.config.mount_check_enabled,
-                            mount_check_paths: this.config.mount_check_paths,
-                            mount_failure_threshold: this.config.mount_failure_threshold,
-                            enable_multi_user_priority: this.config.enable_multi_user_priority,
-                            priority_history_limit: this.config.priority_history_limit,
-                            full_backlog: this.config.full_backlog,
-                            data_limit_gb_per_hour: this.config.data_limit_gb_per_hour,
-                            rate_limit_exempt_paths: this.config.rate_limit_exempt_paths
-                        };
-
-                        const res = await fetch('/api/settings', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify(payload)
-                        });
-
-                        if (res.ok) {
-                            this.message = 'Settings saved successfully. Worker pool restarting...';
-                            this.newPassword = ''; // Clear password field
-                            this.passwordWarning = false; // Clear warning
-                        } else {
-                            const errorData = await res.json().catch(() => ({ detail: 'Failed to save settings' }));
-                            this.message = errorData.detail || 'Failed to save settings.';
-                            this.isError = true;
-                        }
-                    } catch (e) {
-                        this.message = 'Error saving settings: ' + e.message;
-                        this.isError = true;
-                    } finally {
-                        this.saving = false;
-                        setTimeout(() => this.message = '', 5000);
-                    }
-                },
-                
-                async discoverExisting(confirmed = false) {
-                    this.discovering = true;
-                    this.discoverResult = '';
-
-                    try {
-                        const res = await fetch('/api/settings/discover-existing-bifs', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ confirm: confirmed })
-                        });
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            // Check if confirmation is required
-                            if (data.requires_confirmation) {
-                                // Show sample paths for debugging
-                                let debugInfo = '';
-                                if (data.sample_paths && data.sample_paths.length > 0) {
-                                    debugInfo = '\n\nSample BIF paths found:\n' + data.sample_paths.join('\n');
-                                }
-
-                                const confirmMsg = `✓ GOOD NEWS: ${data.percentage.toFixed(1)}% of MISSING items (${data.would_move}/${data.scanned}) have existing BIF files!\n\nDo you want to mark them as COMPLETED?${debugInfo}`;
-
-                                if (confirm(confirmMsg)) {
-                                    // User confirmed, retry with confirmation flag
-                                    this.discoverExisting(true);
-                                    return;
-                                } else {
-                                    this.discoverResult = 'ℹ️ Discovery cancelled. No items were marked as COMPLETED.';
-                                    setTimeout(() => this.discoverResult = '', 10000);
-                                }
-                            } else {
-                                // Normal success
-                                this.discoverResult = `✓ ${data.message}`;
-                                // Auto-hide after 10 seconds
-                                setTimeout(() => this.discoverResult = '', 10000);
-                            }
-                        } else {
-                            this.discoverResult = `✗ Error: ${data.detail || 'Failed to discover BIFs'}`;
-                        }
-                    } catch (e) {
-                        this.discoverResult = `✗ Error: ${e.message}`;
-                    } finally {
-                        this.discovering = false;
-                    }
-                },
-
-                async scanAllBifs() {
-                    if (!confirm('Run the full BIF scan now? This can take several minutes on the Plex config mount.')) {
-                        return;
-                    }
-
-                    this.scanningAllBifs = true;
-                    this.fullBifScanResult = '';
-
-                    try {
-                        const res = await fetch('/api/settings/scan-all-bifs', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'}
-                        });
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            const duration = Number(data.duration_seconds || 0).toFixed(2);
-                            let result = `Scan complete<br><strong>Found ${data.found} BIF files</strong> in ${duration}s`;
-                            if (data.sample_hashes && data.sample_hashes.length > 0) {
-                                result += '<br><br><strong>Sample hashes:</strong><br>' + data.sample_hashes.join('<br>');
-                            }
-                            this.fullBifScanResult = result;
-                        } else {
-                            this.fullBifScanResult = `Error: ${data.detail || 'Failed to run full BIF scan'}`;
-                        }
-                    } catch (e) {
-                        this.fullBifScanResult = `Error: ${e.message}`;
-                    } finally {
-                        this.scanningAllBifs = false;
-                    }
-                },
-
-                async debugVerify() {
-                    this.verifyResult = 'Loading debug info...';
-                    try {
-                        const res = await fetch('/api/settings/verify-debug');
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            let msg = `Debug Info:\n`;
-                            msg += `Config folder: ${data.config_folder}\n`;
-                            if (data.sample_item) {
-                                msg += `\nSample item: ${data.sample_item.title}\n`;
-                                msg += `Bundle hash: ${data.sample_item.bundle_hash}\n`;
-                                msg += `Expected BIF path: ${data.bif_path}\n`;
-                                msg += `BIF exists: ${data.bif_exists}\n`;
-                                msg += `Parent dir exists: ${data.parent_dir_exists}\n`;
-                                if (!data.bif_exists && data.parent_dir_exists) {
-                                    msg += `\n⚠️ Parent directory exists but BIF file is missing`;
-                                } else if (!data.parent_dir_exists) {
-                                    msg += `\n⚠️ Parent directory doesn't exist - check config folder path`;
-                                }
-                            }
-                            alert(msg);
-                            this.verifyResult = '';
-                        } else {
-                            this.verifyResult = `Debug failed: ${data.detail || 'Unknown error'}`;
-                        }
-                    } catch (e) {
-                        this.verifyResult = `Debug error: ${e.message}`;
-                    }
-                },
-
-                async verifyCompleted(confirmed = false) {
-                    this.verifying = true;
-                    this.verifyResult = '';
-
-                    try {
-                        const res = await fetch('/api/settings/verify-completed', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ confirm: confirmed })
-                        });
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            // Check if confirmation is required
-                            if (data.requires_confirmation) {
-                                // Show sample paths for debugging
-                                let debugInfo = '';
-                                if (data.sample_paths && data.sample_paths.length > 0) {
-                                    debugInfo = '\n\nSample BIF paths being checked:\n' + data.sample_paths.join('\n');
-                                }
-
-                                const confirmMsg = `⚠️ WARNING: ${data.percentage.toFixed(1)}% of items (${data.would_move}/${data.verified}) would be moved to MISSING status.\n\nThis might indicate:\n- Incorrect Plex config folder path\n- BIF files stored in a different location\n- Database out of sync\n\nDo you want to proceed anyway?${debugInfo}`;
-
-                                if (confirm(confirmMsg)) {
-                                    // User confirmed, retry with confirmation flag
-                                    this.verifyCompleted(true);
-                                    return;
-                                } else {
-                                    this.verifyResult = '⚠️ Verification cancelled. No items were moved.';
-                                    setTimeout(() => this.verifyResult = '', 10000);
-                                }
-                            } else {
-                                // Normal success
-                                this.verifyResult = `✓ ${data.message}`;
-                                // Auto-hide after 10 seconds
-                                setTimeout(() => this.verifyResult = '', 10000);
-                            }
-                        } else {
-                            this.verifyResult = `✗ Error: ${data.detail || 'Failed to verify items'}`;
-                        }
-                    } catch (e) {
-                        this.verifyResult = `✗ Error: ${e.message}`;
-                    } finally {
-                        this.verifying = false;
-                    }
-                },
-
-                async resetFailed() {
-                    if (!confirm('Are you sure you want to reset all FAILED items to MISSING status? They will be reprocessed in the next queue run.')) {
-                        return;
-                    }
-
-                    this.resettingFailed = true;
-                    this.resetFailedResult = '';
-
-                    try {
-                        const res = await fetch('/api/settings/reset-failed', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'}
-                        });
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            this.resetFailedResult = `✓ ${data.message}`;
-                            setTimeout(() => this.resetFailedResult = '', 10000);
-                        } else {
-                            this.resetFailedResult = `✗ Error: ${data.detail || 'Failed to reset items'}`;
-                        }
-                    } catch (e) {
-                        this.resetFailedResult = `✗ Error: ${e.message}`;
-                    } finally {
-                        this.resettingFailed = false;
-                    }
-                },
-
-                async cleanupOrphaned(dryRun = true) {
-                    this.cleaningUp = true;
-                    this.cleanupResult = '';
-
-                    try {
-                        const res = await fetch('/api/settings/cleanup-orphaned-bundles', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ dry_run: dryRun })
-                        });
-                        const data = await res.json();
-
-                        if (res.ok) {
-                            if (dryRun) {
-                                const sizeMB = (data.total_size / 1024 / 1024).toFixed(2);
-                                let result = `🔍 Dry Run Complete<br><strong>Found ${data.found} orphaned bundles</strong> (${sizeMB} MB)`;
-
-                                if (data.found > 0) {
-                                    result += '<br><br>These bundles no longer exist in Plex database and can be safely deleted.';
-                                    if (data.sample_paths && data.sample_paths.length > 0) {
-                                        result += '<br><br><strong>Sample paths:</strong><br>' + data.sample_paths.slice(0, 3).join('<br>');
-                                    }
-                                    result += '<br><br>Click "🗑️ Delete" to remove them and free up disk space.';
-                                } else {
-                                    result += '<br><br>✓ No orphaned bundles found. Your media directory is clean!';
-                                }
-
-                                this.cleanupResult = result;
-                            } else {
-                                const deletedMB = (data.deleted_size / 1024 / 1024).toFixed(2);
-                                let result = `✓ Cleanup Complete<br><strong>Deleted ${data.deleted} bundles</strong> (freed ${deletedMB} MB)`;
-
-                                if (data.errors && data.errors.length > 0) {
-                                    result += `<br><br>⚠️ ${data.errors.length} errors occurred:<br>` + data.errors.slice(0, 3).join('<br>');
-                                }
-
-                                this.cleanupResult = result;
-                                setTimeout(() => this.cleanupResult = '', 15000);
-                            }
-                        } else {
-                            this.cleanupResult = `✗ Error: ${data.detail || 'Failed to cleanup bundles'}`;
-                        }
-                    } catch (e) {
-                        this.cleanupResult = `✗ Error: ${e.message}`;
-                    } finally {
-                        this.cleaningUp = false;
-                    }
-                },
-
-                async resetLibrary() {
-                    if (!confirm('Are you sure you want to reset the library? This will clear all local status and re-fetch everything from Plex.')) {
-                        return;
-                    }
-
-                    try {
-                        const res = await fetch('/api/settings/reset-library', { method: 'POST' });
-                        if (res.ok) {
-                            alert('Library reset initiated. Redirecting to dashboard...');
-                            window.location.href = '/';
-                        } else {
-                            alert('Failed to reset library.');
-                        }
-                    } catch (e) {
-                        alert('Error: ' + e.message);
-                    }
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+    <a class="back-link" href="/">← Back to overview</a>
+  </div>
+  <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+    <button role="tab" id="tab-connection" onclick="setTab('connection')">
+      Connection</button
+    ><button role="tab" id="tab-processing" onclick="setTab('processing')">
+      Processing</button
+    ><button role="tab" id="tab-priorities" onclick="setTab('priorities')">
+      Priorities</button
+    ><button role="tab" id="tab-protection" onclick="setTab('protection')">
+      Protection</button
+    ><button role="tab" id="tab-maintenance" onclick="setTab('maintenance')">
+      Maintenance</button
+    ><button role="tab" id="tab-security" onclick="setTab('security')">
+      Security
+    </button>
+  </div>
+  <form id="settings-form" novalidate onsubmit="saveSettings(event)">
+    <div class="settings-layout">
+      <div class="settings-sections">
+        <section
+          class="tab-panel"
+          id="panel-connection"
+          role="tabpanel"
+          aria-labelledby="tab-connection"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Plex connection</h2>
+            <p>Your server and library data connection.</p>
+          </div>
+          <div class="panel setting-card">
+            <div class="connection-card">
+              <span class="server-icon">▤</span>
+              <div>
+                <h3 id="server-name">Reading server…</h3>
+                <p id="server-url">—</p>
+              </div>
+              <span class="chip green">Configured</span>
+            </div>
+            <div class="connection-details">
+              <div>
+                <span>Library data</span
+                ><strong id="db-backend">Configured</strong>
+              </div>
+              <div>
+                <span>Authentication</span><strong>Configured on server</strong>
+              </div>
+              <div>
+                <span>Last library sync</span><strong id="last-sync">—</strong>
+              </div>
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Check library connection</h3>
+                <p>Verify library data is available before a sync.</p>
+              </div>
+              <button type="button" onclick="checkConnection()">
+                Check connection ↗
+              </button>
+            </div>
+          </div>
+          <div
+            id="connection-result"
+            class="operation-result"
+            role="status"
+          ></div>
+          <div class="small-note">
+            Connection credentials are managed by the existing Plex setup flow.
+          </div>
+        </section>
+        <section
+          class="tab-panel"
+          id="panel-processing"
+          role="tabpanel"
+          aria-labelledby="tab-processing"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Processing & performance</h2>
+            <p>
+              Choose how much work runs at once and when the library refreshes.
+            </p>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Worker configuration</h3>
+                <p>Hardware acceleration handles the main workload.</p>
+              </div>
+              <span class="chip green">Intel · VAAPI</span>
+            </div>
+            <div class="fields two-col">
+              <div class="field">
+                <label for="gpu_threads">GPU workers</label
+                ><input
+                  id="gpu_threads"
+                  name="gpu_threads"
+                  type="number"
+                  min="0"
+                  max="32"
+                  required
+                />
+                <p>Concurrent jobs using your Intel GPU.</p>
+              </div>
+              <div class="field">
+                <label for="cpu_threads">CPU workers</label
+                ><input
+                  id="cpu_threads"
+                  name="cpu_threads"
+                  type="number"
+                  min="0"
+                  max="64"
+                  required
+                />
+                <p>Software workers, including unsupported codec fallback.</p>
+              </div>
+            </div>
+            <div class="setting-divider"></div>
+            <div class="field horizontal">
+              <div>
+                <label for="sync_hours">Library sync interval</label>
+                <p>How often to refresh media from Plex.</p>
+              </div>
+              <div class="input-unit">
+                <input
+                  id="sync_hours"
+                  name="sync_hours"
+                  type="number"
+                  min="1"
+                  max="168"
+                  required
+                /><span>hours</span>
+              </div>
+            </div>
+            <div class="toggle-row">
+              <div>
+                <h3>Use database sync</h3>
+                <p>Read the library directly instead of using the Plex API.</p>
+              </div>
+              <label class="switch"
+                ><input
+                  id="use_database_sync"
+                  name="use_database_sync"
+                  type="checkbox"
+                  aria-label="Use database sync" /><span></span
+              ></label>
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Hourly data budget</h3>
+                <p>Control how much media is read each hour.</p>
+              </div>
+              <span class="chip" id="budget-label">Unlimited</span>
+            </div>
+            <div class="field horizontal">
+              <div>
+                <label for="data_limit_gb_per_hour">Data limit</label>
+                <p>Set to zero for unlimited processing.</p>
+              </div>
+              <div class="input-unit">
+                <input
+                  id="data_limit_gb_per_hour"
+                  name="data_limit_gb_per_hour"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  required
+                /><span>GB / hr</span>
+              </div>
+            </div>
+            <div class="field" style="margin-top: 22px">
+              <label for="rate_limit_exempt_paths">Exempt paths</label
+              ><textarea
+                id="rate_limit_exempt_paths"
+                name="rate_limit_exempt_paths"
+                rows="2"
+                placeholder="/mnt/local,/mnt/remote/cache"
+              ></textarea>
+              <p>Comma-separated paths that do not use the hourly budget.</p>
+            </div>
+          </div>
+        </section>
+        <section
+          class="tab-panel"
+          id="panel-priorities"
+          role="tabpanel"
+          aria-labelledby="tab-priorities"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Queue priorities</h2>
+            <p>
+              Choose what enters the queue and whose viewing history matters.
+            </p>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Processing scope</h3>
+                <p>The complete catalogue stays available in either mode.</p>
+              </div>
+            </div>
+            <div class="scope-options">
+              <label class="scope-option"
+                ><input
+                  type="radio"
+                  name="scope"
+                  value="priority"
+                  checked
+                /><span
+                  ><strong>Priority only</strong
+                  ><small
+                    >Playback, watch history, selected hubs, and fully cached
+                    media.</small
+                  ></span
+                ><span class="chip orange">Recommended</span></label
+              ><label class="scope-option"
+                ><input type="radio" name="scope" value="all" /><span
+                  ><strong>Full backlog</strong
+                  ><small
+                    >Generate previews for every eligible library item.</small
+                  ></span
+                ></label
+              >
+            </div>
+            <div class="inline-info">
+              Current work finishes when the processing scope changes.
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="toggle-row" style="border: 0; padding-top: 0">
+              <div>
+                <h3>Include all viewers</h3>
+                <p>Use watch history from everyone on the Plex server.</p>
+              </div>
+              <label class="switch"
+                ><input
+                  id="enable_multi_user_priority"
+                  name="enable_multi_user_priority"
+                  type="checkbox"
+                  aria-label="Include all viewers" /><span></span
+              ></label>
+            </div>
+            <div class="setting-divider"></div>
+            <div class="field horizontal">
+              <div>
+                <label for="priority_history_limit">History per viewer</label>
+                <p>Recent watched items considered for each account.</p>
+              </div>
+              <div class="input-unit">
+                <input
+                  id="priority_history_limit"
+                  name="priority_history_limit"
+                  type="number"
+                  min="10"
+                  max="200"
+                  step="10"
+                  required
+                /><span>items</span>
+              </div>
+            </div>
+            <div class="small-note">
+              Multi-viewer history requires a server owner or admin Plex token.
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Current selection rules</h3>
+                <p>How items are selected from history and Plex hubs.</p>
+              </div>
+              <span class="chip">Read only</span>
+            </div>
+            <div class="rule-grid">
+              <div>
+                <strong>3</strong><span>Upcoming episodes per show</span>
+              </div>
+              <div>
+                <strong>20</strong><span>Entries per selected hub</span>
+              </div>
+              <div>
+                <strong>3</strong><span>Episodes per featured show</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section
+          class="tab-panel"
+          id="panel-protection"
+          role="tabpanel"
+          aria-labelledby="tab-protection"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Mount protection</h2>
+            <p>Keep processing safe when storage becomes unavailable.</p>
+          </div>
+          <div class="panel setting-card">
+            <div class="toggle-row" style="border: 0; padding-top: 0">
+              <div>
+                <h3>Validate storage mounts</h3>
+                <p>Check required media paths before processing and syncing.</p>
+              </div>
+              <label class="switch"
+                ><input
+                  id="mount_check_enabled"
+                  name="mount_check_enabled"
+                  type="checkbox"
+                  aria-label="Validate storage mounts" /><span></span
+              ></label>
+            </div>
+            <div class="setting-divider"></div>
+            <div class="field">
+              <label for="mount_check_paths">Additional mount paths</label
+              ><textarea
+                id="mount_check_paths"
+                name="mount_check_paths"
+                rows="3"
+                placeholder="/mnt/media/.mounted,/data/.marker"
+              ></textarea>
+              <p>Comma-separated paths or marker files to validate.</p>
+            </div>
+            <div class="setting-divider"></div>
+            <div class="field horizontal">
+              <div>
+                <label for="mount_failure_threshold"
+                  >Missing media threshold</label
+                >
+                <p>
+                  Abort the sync if this percentage suddenly becomes
+                  unavailable.
+                </p>
+              </div>
+              <div class="input-unit">
+                <input
+                  id="mount_failure_threshold"
+                  name="mount_failure_threshold"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="0.1"
+                  required
+                /><span>%</span>
+              </div>
+            </div>
+            <div class="inline-info">
+              A failed check pauses processing so an unavailable mount isn’t
+              treated as missing media.
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Validate current mounts</h3>
+                <p>Check paths before the next library sync.</p>
+              </div>
+              <button type="button" onclick="testMounts()">
+                Test mounts ↗
+              </button>
+            </div>
+            <div id="mount-result" class="operation-result" role="status"></div>
+          </div>
+        </section>
+        <section
+          class="tab-panel"
+          id="panel-maintenance"
+          role="tabpanel"
+          aria-labelledby="tab-maintenance"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Library maintenance</h2>
+            <p>Inspect previews, retry failures, and keep the library tidy.</p>
+          </div>
+          <div
+            id="maintenance-result"
+            class="operation-result"
+            role="status"
+          ></div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Preview files</h3>
+                <p>Find and verify the BIF files already on disk.</p>
+              </div>
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Discover existing previews</h3>
+                <p>Check waiting items for previews that already exist.</p>
+              </div>
+              <button
+                type="button"
+                onclick="maintenance('Discover existing previews')"
+              >
+                Scan missing
+              </button>
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Scan all preview bundles</h3>
+                <p>Report BIF files across the full Plex bundle tree.</p>
+              </div>
+              <button
+                type="button"
+                onclick="maintenance('Scan all preview bundles')"
+              >
+                Full scan
+              </button>
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Verify completed items</h3>
+                <p>
+                  Check that completed items still have their preview files.
+                </p>
+              </div>
+              <div class="button-pair">
+                <button
+                  type="button"
+                  onclick="maintenance('Debug completed previews')"
+                >
+                  Debug</button
+                ><button
+                  type="button"
+                  onclick="maintenance('Verify completed items')"
+                >
+                  Verify
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="action-row" style="border: 0; padding-top: 0">
+              <div>
+                <h3>
+                  Retry failed items
+                  <span class="chip" id="failed-count">—</span>
+                </h3>
+                <p>Return failed items to the queue for another attempt.</p>
+              </div>
+              <button type="button" onclick="maintenance('Retry failed items')">
+                Reset failed
+              </button>
+            </div>
+            <div class="action-row">
+              <div>
+                <h3>Orphaned preview bundles</h3>
+                <p>Find bundles belonging to media no longer in Plex.</p>
+              </div>
+              <div class="button-pair">
+                <button
+                  type="button"
+                  onclick="maintenance('Preview orphan cleanup')"
+                >
+                  Dry run</button
+                ><button
+                  class="danger-outline"
+                  type="button"
+                  onclick="
+                    confirmAction(
+                      'Delete orphaned bundles',
+                      'This removes preview bundles for deleted media. Review a dry run first.',
+                    )
+                  "
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="panel setting-card danger-card">
+            <div class="action-row" style="border: 0; padding: 0">
+              <div>
+                <h3>Reset library database</h3>
+                <p>Clear local records and resync the complete Plex library.</p>
+              </div>
+              <button
+                type="button"
+                class="danger-outline"
+                onclick="
+                  confirmAction(
+                    'Reset library database',
+                    'This clears preview tracking records and starts a full library resync.',
+                  )
+                "
+              >
+                Reset & resync
+              </button>
+            </div>
+          </div>
+        </section>
+        <section
+          class="tab-panel"
+          id="panel-security"
+          role="tabpanel"
+          aria-labelledby="tab-security"
+          hidden
+        >
+          <div class="section-intro">
+            <h2>Account security</h2>
+            <p>Manage access to the preview generator.</p>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
+                <h3>Administrator password</h3>
+                <p>Leave these fields empty to keep the current password.</p>
+              </div>
+              <span class="chip">admin</span>
+            </div>
+            <div class="field">
+              <label for="new_password">New password</label
+              ><input
+                id="new_password"
+                name="new_password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Enter a new password"
+              />
+              <p>Maximum 72 bytes for password compatibility.</p>
+            </div>
+            <div class="field" style="margin-top: 22px">
+              <label for="confirm_password">Confirm new password</label
+              ><input
+                id="confirm_password"
+                name="confirm_password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Re-enter the password"
+              />
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="settings-context">
+        <div class="context-card">
+          <span class="eyebrow">AT A GLANCE</span>
+          <div class="context-row">
+            <span>Server</span><strong id="context-server">—</strong>
+          </div>
+          <div class="context-row">
+            <span>Hardware</span><strong>Intel GPU</strong>
+          </div>
+          <div class="context-row">
+            <span>Workers</span><strong id="context-workers">—</strong>
+          </div>
+          <div class="context-row">
+            <span>Processing scope</span
+            ><strong id="context-scope">Priority only</strong>
+          </div>
+          <div class="context-row">
+            <span>Hourly budget</span
+            ><strong id="context-budget">Unlimited</strong>
+          </div>
+          <div class="context-note">
+            <span class="statusdot"></span>Values loaded from production.<br /><span
+              style="padding-left: 14px"
+              >Changes apply when you save.</span
+            >
+          </div>
+        </div>
+        <div class="help-card">
+          <svg
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+          >
+            <use href="#settings" />
+          </svg>
+          <h3 id="help-title">Tune your workload</h3>
+          <p id="help-text">
+            Start with one GPU worker. More concurrent jobs may increase media
+            reads without improving throughput.
+          </p>
+        </div>
+      </div>
+    </div>
+    <div class="save-bar">
+      <div>
+        <span class="save-dot" id="save-dot"></span
+        ><strong id="save-state">Loading current settings…</strong
+        ><span class="save-description"
+          >Changes apply to your preview generator</span
+        >
+      </div>
+      <div class="save-actions">
+        <button id="discard" type="button" onclick="discardChanges()" disabled>
+          Discard</button
+        ><button id="save" class="primary" type="submit" disabled>
+          Save changes
+        </button>
+      </div>
+    </div>
+  </form>
+  <footer class="footer">
+    <span id="loaded-at">Reading current settings…</span
+    ><span>Plex Preview Generator</span>
+  </footer>
+</main>
+{% endblock %}{% block scripts %}
+<script src="/static/settings.js?v=2"></script>
+{% endblock %}

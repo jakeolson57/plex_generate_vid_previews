@@ -20,6 +20,7 @@ from loguru import logger
 from .database import create_db_and_tables, get_session, engine
 from .models import MediaItem, PreviewStatus, AppSettings
 from .scheduler import scheduler
+from .overview import overview_summary, library_connection_health
 from passlib.context import CryptContext
 
 class MediaItemRead(MediaItem):
@@ -170,12 +171,15 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "priority_history_limit": 50,
             "full_backlog": False,
             "data_limit_gb_per_hour": 0.0,
-            "rate_limit_exempt_paths": ""
+            "rate_limit_exempt_paths": "",
+            "use_database_sync": True
         }
     return {
         "gpu_threads": settings.gpu_threads,
         "cpu_threads": settings.cpu_threads,
         "sync_interval": settings.sync_interval,
+        "use_database_sync": settings.use_database_sync,
+        "last_sync_time": settings.last_sync_time,
         "plex_url": settings.plex_url,
         "plex_server_name": settings.plex_server_name,
         "plex_client_identifier": settings.plex_client_identifier,
@@ -188,6 +192,17 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
     }
+
+@app.get("/api/settings/library-health")
+async def library_health(user: str = Depends(login_required)):
+    import asyncio
+    if not scheduler.config:
+        raise HTTPException(status_code=400, detail="Scheduler not configured")
+    try:
+        return await asyncio.to_thread(library_connection_health, scheduler.config)
+    except Exception as exc:
+        return JSONResponse(status_code=503, content={"healthy": False, "error": str(exc)})
+
 
 @app.get("/api/settings/plex-identifier")
 async def get_plex_identifier(session: Session = Depends(get_session), user: str = Depends(login_required)):
@@ -220,6 +235,10 @@ async def update_settings(
     # Update sync interval
     if "sync_interval" in payload:
         settings.sync_interval = int(payload["sync_interval"])
+    if "use_database_sync" in payload:
+        if not isinstance(payload["use_database_sync"], bool):
+            raise HTTPException(status_code=400, detail="use_database_sync must be a boolean")
+        settings.use_database_sync = payload["use_database_sync"]
 
     # Update mount protection settings
     if "mount_check_enabled" in payload:
@@ -928,6 +947,10 @@ async def save_config(
     return {"message": "Saved"}
 
 # API Endpoints
+@app.get("/api/overview")
+async def get_overview(session: Session = Depends(get_session), user: str = Depends(login_required)):
+    return overview_summary(session)
+
 @app.get("/api/stats")
 async def get_stats(session: Session = Depends(get_session), user: str = Depends(login_required)):
     # Expire all cached objects to ensure fresh data from database
@@ -1012,6 +1035,10 @@ async def get_items(
     library_name: Optional[str] = None,
     hide_completed: bool = False, # Filter to hide completed items
     show_priority_only: bool = False, # Filter to show only priority items
+    pending_only: bool = False,
+    attention_only: bool = False,
+    media_type: Optional[str] = None,
+    origin: Optional[str] = None,
     sort_by: Optional[str] = None, # Column to sort by: added_at, title, avg_speed, status
     sort_order: Optional[str] = "desc", # Sort order: asc or desc
     page: int = 1,
@@ -1042,6 +1069,19 @@ async def get_items(
         filters.append(MediaItem.status != PreviewStatus.COMPLETED)
     if show_priority_only: # Show only priority items
         filters.append(MediaItem.is_priority == True)
+    if attention_only:
+        filters.append(col(MediaItem.status).in_([PreviewStatus.FAILED, PreviewStatus.SLOW_FAILED]))
+    if pending_only:
+        filters.append(col(MediaItem.status).in_([PreviewStatus.MISSING, PreviewStatus.QUEUED]))
+    if media_type:
+        filters.append(MediaItem.media_type == media_type)
+    if origin:
+        reasons = func.json_each(case((func.json_valid(MediaItem.priority_reasons) == 1,
+                                       MediaItem.priority_reasons), else_="[]")).table_valued("value", "type").alias("reason")
+        kind, _, value = origin.partition(":")
+        reason_value = case((reasons.c.type == "object", reasons.c.value), else_="{}")
+        condition = (func.json_extract(reason_value, "$.hub") == value) if kind == "hub" else (func.json_extract(reason_value, "$.type") == value)
+        filters.append(select(1).select_from(reasons).where(condition).exists())
     
     # Count total matching
     count_query = select(func.count()).select_from(MediaItem)

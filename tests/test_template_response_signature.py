@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from starlette.requests import Request
 
@@ -53,6 +54,7 @@ def test_settings_template_includes_full_bif_scan_tool():
     template = main.templates.get_template("settings.html")
     source = template.render(user="test")
 
-    assert "Full BIF Scan" in source
-    assert "scanAllBifs" in source
-    assert "/api/settings/scan-all-bifs" in source
+    assert "Scan all preview bundles" in source
+    assert "Full scan" in source
+    assert "Maintenance" in source
+    assert "scan-all-bifs" in Path("plex_generate_previews/web/static/settings.js").read_text()
