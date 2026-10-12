@@ -508,6 +508,24 @@ def test_collect_priority_hub_items_keeps_only_first_twenty_movies():
     ] == [(1000, "show")]
 
 
+def test_collect_priority_hub_items_keeps_only_first_twenty_tv_entries():
+    scheduler = Scheduler()
+    items = [
+        MagicMock(ratingKey=str(index), type=("show", "season", "episode")[(index - 1) % 3],
+                  title=f"TV Item {index}", parentRatingKey="1000", index=1)
+        for index in range(1, 26)
+    ]
+    hub = MagicMock(title="Trending", items=items)
+    section = MagicMock()
+    section.hubs.return_value = [hub]
+    plex = MagicMock()
+    plex.library.sections.return_value = [section]
+
+    result = scheduler._collect_priority_hub_items(plex)
+
+    assert [item.rating_key for item in result["Trending"]] == list(range(1, 21))
+
+
 def test_refresh_priority_metadata_updates_existing_pending_rows(monkeypatch):
     engine = create_engine(
         "sqlite://",

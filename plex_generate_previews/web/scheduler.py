@@ -1835,6 +1835,7 @@ class Scheduler:
 
                 converted_items = []
                 movie_count = 0
+                tv_count = 0
                 for item in raw_items[:100]:
                     try:
                         rating_key = int(getattr(item, "ratingKey"))
@@ -1846,6 +1847,10 @@ class Scheduler:
                         if movie_count >= 20:
                             continue
                         movie_count += 1
+                    elif item_type in {"show", "season", "episode"}:
+                        if tv_count >= 20:
+                            continue
+                        tv_count += 1
 
                     show_id = None
                     season_index = None
