@@ -20,7 +20,7 @@ services:
       - CPU_THREADS=1
       - LOG_LEVEL=DEBUG
       # Startup Wait (for delayed mounts like rclone)
-      - STARTUP_WAIT_PATH=/mnt/remote/nzbdav/content
+      - STARTUP_WAIT_PATH=/mnt/remote/infinidysk/.ids
     volumes:
       - ./config:/config
       - /mnt:/mnt

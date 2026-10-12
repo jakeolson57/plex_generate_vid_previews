@@ -586,10 +586,10 @@ def test_build_mount_check_paths_includes_required_preview_paths(mock_config):
     scheduler.config = mock_config
     mock_config.plex_config_folder = "/plex-config"
 
-    paths = scheduler._build_mount_check_paths("/mnt/remote/nzbdav,/mnt/remote/debrid")
+    paths = scheduler._build_mount_check_paths("/mnt/remote/infinidysk/.ids,/mnt/remote/debrid")
 
     assert paths == [
-        "/mnt/remote/nzbdav",
+        "/mnt/remote/infinidysk/.ids",
         "/mnt/remote/debrid",
         "/mnt/plex",
         "/plex-config",

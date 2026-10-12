@@ -436,7 +436,7 @@ class Scheduler:
 
         required_paths = [
             "/mnt/plex",
-            "/mnt/remote/nzbdav",
+            "/mnt/remote/infinidysk/.ids",
             "/mnt/remote/debrid",
         ]
         plex_config_folder = getattr(self.config, "plex_config_folder", None) if self.config else None
