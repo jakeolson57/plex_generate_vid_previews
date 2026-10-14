@@ -38,6 +38,18 @@ from .priority import (
 import os
 from datetime import datetime, timezone, timedelta
 
+
+def _ensure_aware(dt):
+    """Return a timezone-aware datetime.
+
+    SQLite/SQLAlchemy may hand back naive datetimes even when we stored
+    aware ones. Assume naive values are UTC.
+    """
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class DbProgressManager:
     def __init__(self):
         # Track last update time per worker to throttle DB writes
@@ -919,10 +931,12 @@ class Scheduler:
 
             if self.config:
                 # Update last_sync_time from DB if available
+                # (SQLite returns naive datetimes — normalize to aware for
+                # safe arithmetic with datetime.now(timezone.utc))
                 if db_config and db_config.last_sync_time:
-                    self.last_sync_time = db_config.last_sync_time
+                    self.last_sync_time = _ensure_aware(db_config.last_sync_time)
                 else:
-                    self.last_sync_time = datetime.fromtimestamp(0) # Epoch start
+                    self.last_sync_time = datetime.fromtimestamp(0, tz=timezone.utc) # Epoch start
 
                 # Load paused state from DB if available
                 if db_config and hasattr(db_config, 'queue_paused'):
@@ -977,10 +991,10 @@ class Scheduler:
                     logger.debug(f"Could not load sync_interval from settings, using default: {e}")
 
                 # Check if sync is needed (based on sync_interval or when forced)
-                # Use datetime subtraction to avoid timezone issues with .timestamp()
-                # (naive UTC datetimes compared with naive UTC datetimes)
+                # Normalize to aware datetimes — SQLite may return naive values.
                 if self.last_sync_time:
-                    seconds_since_sync = (datetime.now(timezone.utc) - self.last_sync_time).total_seconds()
+                    last_sync = _ensure_aware(self.last_sync_time)
+                    seconds_since_sync = (datetime.now(timezone.utc) - last_sync).total_seconds()
                     sync_needed = self.force_sync or seconds_since_sync > sync_interval
                 else:
                     sync_needed = True
@@ -1844,6 +1858,11 @@ class Scheduler:
                         rating_key = int(getattr(item, "ratingKey"))
                     except (TypeError, ValueError):
                         continue
+                    except Exception as e:
+                        # plexapi may raise NotFound etc. when lazy-loading
+                        # items (e.g. stale music station refs) — skip them
+                        logger.debug(f"Skipping unreadable hub item: {e}")
+                        continue
 
                     item_type = getattr(item, "type", "")
                     if item_type == "movie":
@@ -2440,7 +2459,7 @@ class Scheduler:
                 settings_session.add(settings)
                 settings_session.commit()
                 new_last_sync_time = settings.last_sync_time # Extract value while session is open
-            self.last_sync_time = new_last_sync_time # Assign after session is closed
+            self.last_sync_time = _ensure_aware(new_last_sync_time) # Assign after session is closed
 
             total_sync_time = time.time() - sync_start_time
             logger.info(f"Library sync complete in {total_sync_time:.2f}s. {sync_stats}")
