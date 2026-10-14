@@ -2196,7 +2196,7 @@ class Scheduler:
                 progress=initial_progress,
                 bundle_hash=bundle_hash,
                 media_parts_info=media_parts_json,
-                added_at=added_at if added_at else datetime.now(timezone.utc),
+                added_at=_ensure_aware(added_at) if added_at else datetime.now(timezone.utc),
                 error_message="Media file not found (broken symlink or deleted)" if not media_exists else None,
             )
             self._apply_priority_info_to_item(
@@ -2225,9 +2225,10 @@ class Scheduler:
             if media_parts_json:
                 db_item.media_parts_info = media_parts_json
 
-            # Update added_at if differs
-            if added_at and db_item.added_at != added_at:
-                db_item.added_at = added_at
+            # Update added_at if differs (normalize to aware first)
+            added_at_aware = _ensure_aware(added_at) if added_at else None
+            if added_at_aware and _ensure_aware(db_item.added_at) != added_at_aware:
+                db_item.added_at = added_at_aware
 
             # Check if media files exist - if not, mark as MEDIA_MISSING
                 if not media_exists:
