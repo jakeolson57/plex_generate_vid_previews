@@ -437,26 +437,21 @@ class Scheduler:
         """
         Build the mount paths that must be available before sync can run.
 
-        We always include the configured Plex config folder plus the media and
-        remote paths used by the preview generator, even if the persisted
-        settings only list a subset of paths.
+        Only checks paths the user explicitly configured (via the
+        mount_check_paths setting) plus the Plex config folder.
+        Previously this hardcoded the upstream author's personal paths
+        (/mnt/plex, /mnt/remote/...) which broke sync for everyone else.
         """
         paths: list[str] = []
 
         if configured_paths:
             paths.extend([p.strip() for p in configured_paths.split(',') if p.strip()])
 
-        required_paths = [
-            "/mnt/plex",
-            "/mnt/remote/infinidysk/.ids",
-            "/mnt/remote/debrid",
-        ]
         plex_config_folder = getattr(self.config, "plex_config_folder", None) if self.config else None
-        required_paths.append(plex_config_folder or "/plex-config")
-
-        for path in required_paths:
-            if path not in paths:
-                paths.append(path)
+        # Only include the Plex config folder if it's a real local path
+        # (not a placeholder default)
+        if plex_config_folder and plex_config_folder not in paths:
+            paths.append(plex_config_folder)
 
         return paths
 
