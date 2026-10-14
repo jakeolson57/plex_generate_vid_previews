@@ -433,6 +433,23 @@ class Scheduler:
         finally:
             self._priority_refresh_lock.release()
 
+    def _translate_plex_path(self, plex_path: str) -> str:
+        """Translate a Plex-side path (e.g. /data/...) to the local path
+        (e.g. /media/...) using the configured path mappings."""
+        if not plex_path or not self.config:
+            return plex_path
+        mappings = getattr(self.config, "plex_path_mappings", None) or []
+        # Most specific (longest) remote prefix wins
+        for remote, local in sorted(mappings, key=lambda x: len(x[0]), reverse=True):
+            if remote and plex_path.startswith(remote):
+                return local + plex_path[len(remote):]
+        # Fallback to legacy single mapping
+        remote = getattr(self.config, "plex_videos_path_mapping", "")
+        local = getattr(self.config, "plex_local_videos_path_mapping", "")
+        if remote and local and plex_path.startswith(remote):
+            return local + plex_path[len(remote):]
+        return plex_path
+
     def _build_mount_check_paths(self, configured_paths: Optional[str]) -> list[str]:
         """
         Build the mount paths that must be available before sync can run.
@@ -1524,18 +1541,23 @@ class Scheduler:
                         try:
                             parts = json.loads(item.media_parts_info)
                             # Check if at least one part exists
+                            # (translate Plex paths to local paths first)
                             for part in parts:
                                 file_path = part.get('file_path')
-                                if file_path and os.path.exists(file_path):
+                                local_path = self._translate_plex_path(file_path) if file_path else None
+                                if local_path and os.path.exists(local_path):
                                     media_exists = True
                                     break
                         except (json.JSONDecodeError, KeyError):
                             # If we can't parse media_parts_info, check file_path as fallback
-                            if item.file_path and os.path.exists(item.file_path):
+                            local_fp = self._translate_plex_path(item.file_path) if item.file_path else None
+                            if local_fp and os.path.exists(local_fp):
                                 media_exists = True
-                    elif item.file_path and os.path.exists(item.file_path):
-                        # Fallback to file_path for backwards compatibility
-                        media_exists = True
+                    elif item.file_path:
+                        local_fp = self._translate_plex_path(item.file_path)
+                        if local_fp and os.path.exists(local_fp):
+                            # Fallback to file_path for backwards compatibility
+                            media_exists = True
 
                     if not media_exists:
                         # Media file doesn't exist (broken symlink or deleted)
@@ -2143,10 +2165,13 @@ class Scheduler:
             )
 
         # Check if media files exist (detect broken symlinks)
+        # Note: file_path comes from Plex's DB (e.g. /data/...) — translate
+        # to local paths (e.g. /media/...) via path mappings before checking.
         media_exists = False
         if media_parts:
             for file_path, _ in media_parts:
-                if file_path and os.path.exists(file_path):
+                local_path = self._translate_plex_path(file_path) if file_path else None
+                if local_path and os.path.exists(local_path):
                     media_exists = True
                     break
 
