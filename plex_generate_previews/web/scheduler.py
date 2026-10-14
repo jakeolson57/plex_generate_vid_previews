@@ -254,7 +254,7 @@ class DbProgressManager:
                 item.status = PreviewStatus.PROCESSING
 
             item.progress = 0
-            item.last_attempted_at = datetime.utcnow()
+            item.last_attempted_at = datetime.now(timezone.utc)
             if bundle_hash:
                 item.current_processing_bundle_hash = bundle_hash
 
@@ -302,7 +302,7 @@ class Scheduler:
         )
 
     def _apply_priority_info_to_item(self, item: MediaItem, priority_info: Optional[PriorityInfo]) -> bool:
-        calculated_at = datetime.utcnow()
+        calculated_at = datetime.now(timezone.utc)
         if priority_info and priority_info.score > 0:
             priority_reasons = json.dumps(priority_info.reasons, separators=(",", ":"))
             changed = (
@@ -615,7 +615,7 @@ class Scheduler:
                         session.commit()
                     return False
 
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 limit_bytes = int(settings.data_limit_gb_per_hour * 1024 * 1024 * 1024)
                 
                 # Check if an hour has passed since the current tracking period started
@@ -980,7 +980,7 @@ class Scheduler:
                 # Use datetime subtraction to avoid timezone issues with .timestamp()
                 # (naive UTC datetimes compared with naive UTC datetimes)
                 if self.last_sync_time:
-                    seconds_since_sync = (datetime.utcnow() - self.last_sync_time).total_seconds()
+                    seconds_since_sync = (datetime.now(timezone.utc) - self.last_sync_time).total_seconds()
                     sync_needed = self.force_sync or seconds_since_sync > sync_interval
                 else:
                     sync_needed = True
@@ -1540,7 +1540,7 @@ class Scheduler:
                         item.status = PreviewStatus.MISSING
                         item.progress = 0
                         # Update timestamp so it gets re-queued soon
-                        item.updated_at = datetime.utcnow()
+                        item.updated_at = datetime.now(timezone.utc)
 
                     session.add(item)
 
@@ -1588,7 +1588,7 @@ class Scheduler:
                     )
 
             episodes = self._read_priority_episode_rows()
-            now = datetime.utcnow().replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc).replace(tzinfo=timezone.utc)
             priority_infos = build_priority_infos(
                 watch_events=self._read_priority_watch_events(history_limit),
                 episodes=episodes,
@@ -1770,7 +1770,7 @@ class Scheduler:
                             "view_offset": int(getattr(item, "viewOffset", 0) or 0),
                             "duration": int(getattr(item, "duration", 0) or 0),
                         })
-                self._playback_snapshot = {"available": True, "sessions": sessions, "updated_at": datetime.utcnow().isoformat() + "Z"}
+                self._playback_snapshot = {"available": True, "sessions": sessions, "updated_at": datetime.now(timezone.utc).isoformat() + "Z"}
             except Exception:
                 logger.warning("Plex playback sessions unavailable")
                 self._playback_snapshot = {"available": False, "sessions": [], "updated_at": None}
@@ -2157,7 +2157,7 @@ class Scheduler:
                 progress=initial_progress,
                 bundle_hash=bundle_hash,
                 media_parts_info=media_parts_json,
-                added_at=added_at if added_at else datetime.utcnow(),
+                added_at=added_at if added_at else datetime.now(timezone.utc),
                 error_message="Media file not found (broken symlink or deleted)" if not media_exists else None,
             )
             self._apply_priority_info_to_item(
@@ -2197,7 +2197,7 @@ class Scheduler:
                         db_item.status = PreviewStatus.MEDIA_MISSING
                         db_item.progress = 0
                         db_item.error_message = "Media file not found (broken symlink or deleted)"
-                        db_item.updated_at = datetime.utcnow()
+                        db_item.updated_at = datetime.now(timezone.utc)
                         item_updated = True
             else:
                 # Media exists - check BIF status for ALL parts using filesystem scan
@@ -2212,7 +2212,7 @@ class Scheduler:
                     logger.info(f"Item {item_key} ({title}) is completed but has parts without BIF files on disk - resetting to missing")
                     db_item.status = PreviewStatus.MISSING
                     db_item.progress = 0
-                    db_item.updated_at = datetime.utcnow()
+                    db_item.updated_at = datetime.now(timezone.utc)
                     item_updated = True
                 elif db_item.status != PreviewStatus.COMPLETED and all_parts_have_bif:
                     db_item.status = PreviewStatus.COMPLETED
@@ -2223,7 +2223,7 @@ class Scheduler:
                     db_item.status = PreviewStatus.MISSING
                     db_item.progress = 0
                     db_item.error_message = None
-                    db_item.updated_at = datetime.utcnow()
+                    db_item.updated_at = datetime.now(timezone.utc)
                     item_updated = True
 
             stat_type = None
@@ -2435,7 +2435,7 @@ class Scheduler:
                 settings = settings_session.get(AppSettings, 1)
                 if not settings:
                     settings = AppSettings(id=1) # Should exist if config was loaded
-                settings.last_sync_time = datetime.utcnow()
+                settings.last_sync_time = datetime.now(timezone.utc)
                 settings.last_sync_summary = json.dumps(sync_stats)
                 settings_session.add(settings)
                 settings_session.commit()
