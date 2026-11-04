@@ -1095,7 +1095,7 @@ class Scheduler:
         # Example: .../Media/localhost/9/95c7e436036530c98ed02aef85b421100eb8625.bundle/Contents/Indexes/index-sd.bif
         bundle_hash_map = {}
         # Make regex case-insensitive and handle various path separators if needed
-        pattern = re.compile(r'[/\\]([a-f0-9])[/\\]([a-f0-9]+)\.bundle[/\\]Contents[/\\]Indexes[/\\]index-sd\.bif$', re.IGNORECASE)
+        pattern = re.compile(r'[/\]([a-f0-9])[/\]([a-f0-9]+)\.bundle[/\]Contents[/\]Indexes[/\]index-sd\.bif$', re.IGNORECASE)
         
         failed_parse_count = 0
         for bif_path in bif_files:
@@ -2231,14 +2231,14 @@ class Scheduler:
                 db_item.added_at = added_at_aware
 
             # Check if media files exist - if not, mark as MEDIA_MISSING
-                if not media_exists:
-                    if db_item.status != PreviewStatus.MEDIA_MISSING:
-                        logger.info(f"Item {item_key} ({title}) has missing media files - marking as MEDIA_MISSING")
-                        db_item.status = PreviewStatus.MEDIA_MISSING
-                        db_item.progress = 0
-                        db_item.error_message = "Media file not found (broken symlink or deleted)"
-                        db_item.updated_at = datetime.now(timezone.utc)
-                        item_updated = True
+            if not media_exists:
+                if db_item.status != PreviewStatus.MEDIA_MISSING:
+                    logger.info(f"Item {item_key} ({title}) has missing media files - marking as MEDIA_MISSING")
+                    db_item.status = PreviewStatus.MEDIA_MISSING
+                    db_item.progress = 0
+                    db_item.error_message = "Media file not found (broken symlink or deleted)"
+                    db_item.updated_at = datetime.now(timezone.utc)
+                    item_updated = True
             else:
                 # Media exists - check BIF status for ALL parts using filesystem scan
                 any_missing_bif = False
