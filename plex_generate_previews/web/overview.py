@@ -6,6 +6,18 @@ from sqlmodel import select, func, col
 from .models import AppSettings, MediaItem, PreviewCompletion, PreviewStatus
 
 
+def _format_eta(eta_hours):
+    """Human-readable ETA from a duration in hours; '—' when unknown."""
+    if eta_hours is None:
+        return '—'
+    minutes = int(round(eta_hours * 60))
+    if minutes < 60:
+        return f'~{max(minutes, 1)}m'
+    if eta_hours < 48:
+        return f'~{eta_hours:.0f}h'
+    return f'~{eta_hours / 24:.0f}d'
+
+
 def record_completion(session, item, previous_status, data):
     if (data.get('progress_percent', 0) >= 100 and not data.get('failed')
             and previous_status != PreviewStatus.COMPLETED
@@ -46,9 +58,12 @@ def overview_summary(session, now=None):
     backlog = bool(settings and settings.full_backlog)
     pending = ((counts.get('MISSING', 0) + counts.get('QUEUED', 0)) if backlog else
                sum(item.status != PreviewStatus.PROCESSING for item in priority_items))
+    completed = len(unique)
+    eta_hours = (pending / completed) if completed > 0 and pending > 0 else None
     return {
         'counts': counts, 'pending': pending, 'sources': dict(sources),
-        'completed_hour': len(unique), 'hour_bins': bins,
+        'completed_hour': completed, 'hour_bins': bins,
+        'eta_hours': eta_hours, 'eta_display': _format_eta(eta_hours),
         'recent_completed': [{'title': event.title, 'at': event.completed_at.isoformat() + 'Z'}
                              for event in list(unique.values())[:8]],
         'snapshot_at': now.isoformat() + 'Z',
