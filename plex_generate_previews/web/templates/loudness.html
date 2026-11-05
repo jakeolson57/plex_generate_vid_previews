@@ -1,0 +1,98 @@
+{% extends 'base.html' %}{% set page = 'loudness' %}{% block title %}Loudness ·
+Plex Previews{% endblock %}{% block styles %}<link
+  rel="stylesheet"
+  href="/static/loudness.css?v=1"
+/>{% endblock %}{% block content %}
+<main class="loudness-main">
+  <div class="page-heading">
+    <div>
+      <div class="eyebrow">Loudness analysis</div>
+      <h1>Loudness</h1>
+      <div class="subtext">
+        Read-only view of what still needs loudness analysis. Nothing on this
+        page starts processing — no scheduler runs, no analyze calls, and no
+        writes to Plex.
+      </div>
+    </div>
+    <a class="back-link" href="/">← Back to overview</a>
+  </div>
+
+  <div class="loudness-controls">
+    <label for="loudness-library">Library</label>
+    <select id="loudness-library">
+      <option value="">All libraries</option>
+    </select>
+    <button id="loudness-refresh" class="secondary" type="button">
+      Refresh
+    </button>
+    <span id="loudness-updated" class="loudness-updated"></span>
+  </div>
+
+  <section class="stat-grid" aria-label="Loudness summary">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-pending">–</div>
+      <div class="stat-label">Still needs analysis</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-analyzed">–</div>
+      <div class="stat-label">Already analyzed in Plex</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-total">–</div>
+      <div class="stat-label">Total audio streams</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-measured">–</div>
+      <div class="stat-label">Measured by us (app DB)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-failed">–</div>
+      <div class="stat-label">Failed by us</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-skipped">–</div>
+      <div class="stat-label">Undecodable, skipped</div>
+    </div>
+  </section>
+
+  <section class="loudness-section">
+    <h2>Per library</h2>
+    <table class="loudness-table">
+      <thead>
+        <tr>
+          <th>Library</th>
+          <th>Total</th>
+          <th>Analyzed</th>
+          <th>Pending</th>
+        </tr>
+      </thead>
+      <tbody id="loudness-per-library"></tbody>
+    </table>
+    <p id="loudness-per-library-empty" class="loudness-empty" hidden>
+      No libraries found.
+    </p>
+  </section>
+
+  <section class="loudness-section">
+    <h2>
+      Still needs analysis
+      <span id="loudness-pending-note" class="loudness-note"></span>
+    </h2>
+    <table class="loudness-table">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Library</th>
+          <th>Codec</th>
+          <th>Stream</th>
+        </tr>
+      </thead>
+      <tbody id="loudness-pending"></tbody>
+    </table>
+    <p id="loudness-pending-empty" class="loudness-empty" hidden>
+      Nothing pending — every audio stream already has loudness data.
+    </p>
+  </section>
+</main>
+{% endblock %}{% block scripts %}<script src="/static/loudness.js?v=1"></script
+>{% endblock %}
