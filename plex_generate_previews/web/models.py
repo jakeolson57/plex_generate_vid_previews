@@ -39,6 +39,7 @@ class AppSettings(SQLModel, table=True):
     last_sync_summary: Optional[str] = None  # JSON summary of last sync (items added/updated/deleted)
     queue_paused: bool = False  # Persistent paused/resumed state for queue processing
     full_backlog: bool = False  # Otherwise process only the current priority sources
+    pause_on_transcode: bool = False  # Opt-in: auto-pause queue while Plex is transcoding
 
     # Mount protection settings
     mount_check_enabled: bool = True  # Enable mount validation before sync/processing

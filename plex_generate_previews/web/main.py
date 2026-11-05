@@ -195,6 +195,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "enable_multi_user_priority": False,
             "priority_history_limit": 50,
             "full_backlog": False,
+            "pause_on_transcode": False,
             "data_limit_gb_per_hour": 0.0,
             "rate_limit_exempt_paths": "",
             "use_database_sync": True
@@ -214,6 +215,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "enable_multi_user_priority": settings.enable_multi_user_priority if hasattr(settings, 'enable_multi_user_priority') else False,
         "priority_history_limit": settings.priority_history_limit if hasattr(settings, 'priority_history_limit') else 50,
         "full_backlog": settings.full_backlog,
+        "pause_on_transcode": settings.pause_on_transcode if hasattr(settings, 'pause_on_transcode') else False,
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
     }
@@ -251,6 +253,11 @@ async def update_settings(
         if not isinstance(payload["full_backlog"], bool):
             raise HTTPException(status_code=400, detail="full_backlog must be a boolean")
         settings.full_backlog = payload["full_backlog"]
+
+    if "pause_on_transcode" in payload:
+        if not isinstance(payload["pause_on_transcode"], bool):
+            raise HTTPException(status_code=400, detail="pause_on_transcode must be a boolean")
+        settings.pause_on_transcode = payload["pause_on_transcode"]
 
     if "gpu_threads" in payload:
         settings.gpu_threads = int(payload["gpu_threads"])
@@ -831,7 +838,8 @@ async def get_queue_status(session: Session = Depends(get_session), user: str = 
     except Exception as e:
         logger.debug(f"Could not load queue_paused from database: {e}")
 
-    return {"paused": scheduler.paused, "db_paused": db_paused}
+    return {"paused": scheduler.paused, "db_paused": db_paused,
+            "auto_paused": getattr(scheduler, "auto_paused", False)}
 
 @app.post("/api/queue/pause")
 async def pause_queue(user: str = Depends(login_required)):
@@ -967,7 +975,10 @@ async def save_config(
 # API Endpoints
 @app.get("/api/overview")
 async def get_overview(session: Session = Depends(get_session), user: str = Depends(login_required)):
-    return overview_summary(session)
+    summary = overview_summary(session)
+    # Runtime-only scheduler state the DB-backed summary can't see
+    summary["auto_paused"] = getattr(scheduler, "auto_paused", False)
+    return summary
 
 @app.get("/api/stats")
 async def get_stats(session: Session = Depends(get_session), user: str = Depends(login_required)):

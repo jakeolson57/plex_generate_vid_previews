@@ -160,6 +160,19 @@ Plex Previews{% endblock %}{% block styles %}<link
                   aria-label="Use database sync" /><span></span
               ></label>
             </div>
+            <div class="toggle-row">
+              <div>
+                <h3>Pause while Plex transcodes</h3>
+                <p>Automatically pause thumbnail generation while someone is streaming a transcode, then resume when it ends.</p>
+              </div>
+              <label class="switch"
+                ><input
+                  id="pause_on_transcode"
+                  name="pause_on_transcode"
+                  type="checkbox"
+                  aria-label="Pause while Plex transcodes" /><span></span
+              ></label>
+            </div>
           </div>
           <div class="panel setting-card">
             <div class="card-heading">

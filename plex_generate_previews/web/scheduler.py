@@ -292,6 +292,10 @@ class Scheduler:
         self.sync_wake_event = threading.Event()  # Separate event for sync thread
         self.force_sync = False
         self.paused = False
+        # Transcode auto-pause: runtime-only, derived from Plex sessions each loop.
+        # Kept separate from manual `paused` so the two never clobber each other.
+        self.auto_paused = False
+        self._transcode_clear_streak = 0  # consecutive transcode-free polls (hysteresis)
         self.last_sync_time: Optional[datetime] = None # Will be loaded from DB
         self.sync_in_progress = False  # Track if sync is currently running
         self._last_rate_limit_check = 0
@@ -621,6 +625,48 @@ class Scheduler:
                 session.commit()
         except Exception as e:
             logger.error(f"Failed to persist resume state to database: {e}")
+
+    def _update_transcode_pause(self):
+        """Engage/disengage auto-pause based on active Plex transcodes.
+
+        Separate from manual pause(): auto-pause is runtime-only, never
+        persisted, and never touches `self.paused`. Fails open — if the
+        Plex API is unreachable we never pause on unknown state.
+        """
+        try:
+            with Session(engine) as session:
+                settings = session.get(AppSettings, 1)
+                enabled = bool(settings and getattr(settings, 'pause_on_transcode', False))
+        except Exception:
+            enabled = False
+        if not enabled:
+            if self.auto_paused:
+                self.auto_paused = False
+                logger.info("Transcode auto-pause disabled in settings; resuming queue")
+            self._transcode_clear_streak = 0
+            return
+        snapshot = self.get_active_playback()
+        if not snapshot.get("available"):
+            return  # fail open: don't pause when we can't see Plex
+        # Only count actively-working transcodes; a paused player usually
+        # holds a throttled session that barely uses the GPU.
+        transcoding = any(
+            s.get("transcoding") and s.get("state") in ("playing", "buffering")
+            for s in snapshot.get("sessions", [])
+        )
+        if transcoding:
+            self._transcode_clear_streak = 0
+            if not self.auto_paused:
+                self.auto_paused = True
+                logger.info("Auto-pausing queue: Plex is transcoding")
+        elif self.auto_paused:
+            # Hysteresis: require a few consecutive transcode-free polls
+            # before resuming so we don't flap on buffering.
+            self._transcode_clear_streak += 1
+            if self._transcode_clear_streak >= 3:
+                self.auto_paused = False
+                self._transcode_clear_streak = 0
+                logger.info("No active Plex transcodes detected; resuming queue")
 
     def _check_rate_limit(self) -> bool:
         """
@@ -1800,6 +1846,8 @@ class Scheduler:
                             "device": getattr(player, "title", "") if isinstance(getattr(player, "title", ""), str) else "",
                             "view_offset": int(getattr(item, "viewOffset", 0) or 0),
                             "duration": int(getattr(item, "duration", 0) or 0),
+                            # None when direct-playing; present when Plex is transcoding this session
+                            "transcoding": getattr(item, "transcodeSession", None) is not None,
                         })
                 self._playback_snapshot = {"available": True, "sessions": sessions, "updated_at": datetime.now(timezone.utc).isoformat() + "Z"}
             except Exception:
@@ -2493,6 +2541,13 @@ class Scheduler:
         if self.paused:
             return
 
+        # Transcode auto-pause: independent of (and never clobbers) manual pause.
+        # In-flight ffmpeg jobs run to completion; only new dispatches stop.
+        self._update_transcode_pause()
+        if self.auto_paused:
+            logger.debug("Queue auto-paused: Plex is transcoding")
+            return
+
         # Check rate limit status
         is_rate_limited = self._check_rate_limit()
 
@@ -2636,9 +2691,10 @@ class Scheduler:
                 logger.error("Please check your Plex server status and network connectivity")
                 logger.error("Resume processing from the web interface once Plex is accessible")
 
-        # Stop condition: Only stop when paused (rate limit is handled by filtering exempt items)
+        # Stop condition: stop when paused or transcode auto-paused
+        # (rate limit is handled by filtering exempt items)
         def should_stop():
-            if self.paused:
+            if self.paused or self.auto_paused:
                 return True
             with Session(engine) as session:
                 settings = session.get(AppSettings, 1)
