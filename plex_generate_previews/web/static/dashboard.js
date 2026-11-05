@@ -271,9 +271,12 @@ function renderOverview() {
   $("pause").textContent = data.settings.queue_paused
     ? "▶ Resume queue"
     : "Ⅱ Pause queue";
+  const autoPaused = Boolean(data.auto_paused) && !data.settings.queue_paused;
   $("live-state").textContent = data.settings.queue_paused
     ? "● Queue paused"
-    : "● Live";
+    : autoPaused
+      ? "● Auto-paused · Plex transcoding"
+      : "● Live";
   $("processing").innerHTML = data.processing.length
     ? data.processing
         .map(
