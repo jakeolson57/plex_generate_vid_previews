@@ -196,6 +196,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "priority_history_limit": 50,
             "full_backlog": False,
             "pause_on_transcode": False,
+            "discord_webhook_configured": False,
             "data_limit_gb_per_hour": 0.0,
             "rate_limit_exempt_paths": "",
             "use_database_sync": True
@@ -216,6 +217,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "priority_history_limit": settings.priority_history_limit if hasattr(settings, 'priority_history_limit') else 50,
         "full_backlog": settings.full_backlog,
         "pause_on_transcode": settings.pause_on_transcode if hasattr(settings, 'pause_on_transcode') else False,
+        "discord_webhook_configured": bool(getattr(settings, 'discord_webhook_url', None)),
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
     }
@@ -258,6 +260,11 @@ async def update_settings(
         if not isinstance(payload["pause_on_transcode"], bool):
             raise HTTPException(status_code=400, detail="pause_on_transcode must be a boolean")
         settings.pause_on_transcode = payload["pause_on_transcode"]
+
+    # Discord webhook URL is write-only (never returned by GET /api/settings).
+    # A non-empty value sets/replaces it; empty or absent leaves it unchanged.
+    if payload.get("discord_webhook_url"):
+        settings.discord_webhook_url = str(payload["discord_webhook_url"])
 
     if "gpu_threads" in payload:
         settings.gpu_threads = int(payload["gpu_threads"])

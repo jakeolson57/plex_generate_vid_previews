@@ -286,6 +286,14 @@ def create_db_and_tables():
         # Column likely exists
         pass
 
+    # Migration: Add discord_webhook_url to AppSettings (write-only secret)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN discord_webhook_url VARCHAR"))
+    except Exception:
+        # Column likely exists
+        pass
+
 def get_session():
     with Session(engine) as session:
         yield session

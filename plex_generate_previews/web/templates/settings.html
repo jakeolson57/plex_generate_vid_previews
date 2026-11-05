@@ -177,6 +177,34 @@ Plex Previews{% endblock %}{% block styles %}<link
           <div class="panel setting-card">
             <div class="card-heading">
               <div>
+                <h3>Notifications</h3>
+                <p>Discord pings when an item fails and when the backlog clears.</p>
+              </div>
+              <span class="chip" id="discord-status">Not configured</span>
+            </div>
+            <div class="field">
+              <label for="discord_webhook_url">Discord webhook URL</label
+              ><input
+                id="discord_webhook_url"
+                name="discord_webhook_url"
+                type="password"
+                autocomplete="off"
+                placeholder="https://discord.com/api/webhooks/…"
+              />
+              <p>
+                Stored write-only — it's never shown again after you save it.
+                Leave this blank unless you're setting or replacing it.
+              </p>
+            </div>
+            <div class="field">
+              <button type="button" class="secondary" id="discord-test">
+                Send test ping
+              </button>
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
                 <h3>Hourly data budget</h3>
                 <p>Control how much media is read each hour.</p>
               </div>
