@@ -6,7 +6,7 @@ import sqlite3
 from typing import List, Tuple, Optional
 from itertools import chain
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlalchemy import case, inspect
+from sqlalchemy import case, inspect, func
 from sqlmodel import Session, select, col
 from sqlalchemy import or_
 from loguru import logger
@@ -19,6 +19,7 @@ from ..utils import setup_working_directory, sanitize_path
 from .database import engine, get_session
 from .models import MediaItem, PreviewStatus, MediaType, AppSettings
 from .overview import record_completion
+from .notify import send_discord
 from .infini_cache import fully_cached_paths, item_is_fully_cached, cached_part_paths
 from .resume_priority import ResumeStateError, recent_partial_rating_keys
 from .priority import (
@@ -126,6 +127,7 @@ class DbProgressManager:
                     previous_status = item.status
                     self._apply_update_to_item(item, data)
                     record_completion(session, item, previous_status, data)
+                    self._maybe_notify(session, item, previous_status)
                     session.add(item)
                     session.commit()
                     return  # Success
@@ -140,6 +142,31 @@ class DbProgressManager:
                     else:
                         logger.error(f"Failed to update DB for {item_key}: {e}")
                     return
+
+    def _maybe_notify(self, session, item, previous_status):
+        """Send Discord pings for failures and backlog-clear. Best-effort only."""
+        try:
+            settings = session.get(AppSettings, 1)
+            webhook = getattr(settings, 'discord_webhook_url', None)
+            if not webhook:
+                return
+            failed_states = (PreviewStatus.FAILED, PreviewStatus.SLOW_FAILED)
+            if item.status in failed_states and previous_status not in failed_states:
+                error = (item.error_message or 'unknown error')[:200]
+                send_discord(webhook, f"❌ Preview failed: {item.title}\n{error}",
+                             debounce_seconds=60)
+            elif previous_status != PreviewStatus.COMPLETED and item.status == PreviewStatus.COMPLETED:
+                remaining = session.exec(
+                    select(func.count()).select_from(MediaItem).where(
+                        col(MediaItem.status).in_([
+                            PreviewStatus.MISSING, PreviewStatus.QUEUED, PreviewStatus.PROCESSING,
+                        ])
+                    )
+                ).one()
+                if remaining == 0:
+                    send_discord(webhook, "✅ Backlog clear — all previews generated")
+        except Exception as e:
+            logger.warning(f"Discord notification check failed: {e}")
 
     def _flush_batch_updates(self):
         """Flush all pending updates in a single transaction."""
@@ -1141,7 +1168,7 @@ class Scheduler:
         # Example: .../Media/localhost/9/95c7e436036530c98ed02aef85b421100eb8625.bundle/Contents/Indexes/index-sd.bif
         bundle_hash_map = {}
         # Make regex case-insensitive and handle various path separators if needed
-        pattern = re.compile(r'[/\]([a-f0-9])[/\]([a-f0-9]+)\.bundle[/\]Contents[/\]Indexes[/\]index-sd\.bif$', re.IGNORECASE)
+        pattern = re.compile(r'[/\\]([a-f0-9])[/\\]([a-f0-9]+)\.bundle[/\\]Contents[/\\]Indexes[/\\]index-sd\.bif$', re.IGNORECASE)
         
         failed_parse_count = 0
         for bif_path in bif_files:
