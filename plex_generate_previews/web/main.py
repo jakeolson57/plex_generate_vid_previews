@@ -195,6 +195,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "enable_multi_user_priority": False,
             "priority_history_limit": 50,
             "full_backlog": False,
+            "pause_on_transcode": False,
             "discord_webhook_configured": False,
             "data_limit_gb_per_hour": 0.0,
             "rate_limit_exempt_paths": "",
@@ -215,6 +216,7 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "enable_multi_user_priority": settings.enable_multi_user_priority if hasattr(settings, 'enable_multi_user_priority') else False,
         "priority_history_limit": settings.priority_history_limit if hasattr(settings, 'priority_history_limit') else 50,
         "full_backlog": settings.full_backlog,
+        "pause_on_transcode": settings.pause_on_transcode if hasattr(settings, 'pause_on_transcode') else False,
         "discord_webhook_configured": bool(getattr(settings, 'discord_webhook_url', None)),
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
@@ -253,6 +255,11 @@ async def update_settings(
         if not isinstance(payload["full_backlog"], bool):
             raise HTTPException(status_code=400, detail="full_backlog must be a boolean")
         settings.full_backlog = payload["full_backlog"]
+
+    if "pause_on_transcode" in payload:
+        if not isinstance(payload["pause_on_transcode"], bool):
+            raise HTTPException(status_code=400, detail="pause_on_transcode must be a boolean")
+        settings.pause_on_transcode = payload["pause_on_transcode"]
 
     # Discord webhook URL is write-only (never returned by GET /api/settings).
     # A non-empty value sets/replaces it; empty or absent leaves it unchanged.
@@ -327,29 +334,6 @@ async def update_settings(
             scheduler.start()
 
     return {"message": "Settings updated"}
-
-
-@app.post("/api/settings/test-discord")
-async def test_discord(
-    payload: dict = Body(default={}),
-    session: Session = Depends(get_session),
-    user: str = Depends(login_required)
-):
-    """Send a test ping to the configured Discord webhook.
-
-    Accepts an optional {"discord_webhook_url": ...} to test an unsaved
-    URL straight from the settings form; otherwise uses the stored one.
-    """
-    from .notify import send_discord
-    webhook = payload.get("discord_webhook_url") if isinstance(payload, dict) else None
-    if not webhook:
-        settings = session.get(AppSettings, 1)
-        webhook = getattr(settings, 'discord_webhook_url', None) if settings else None
-    if not webhook:
-        raise HTTPException(status_code=400, detail="No Discord webhook URL configured")
-    if send_discord(webhook, "🔔 Test ping from Plex Generate Previews — notifications are working"):
-        return {"message": "Test ping sent"}
-    raise HTTPException(status_code=502, detail="Failed to dispatch test ping")
 
 @app.post("/api/settings/reset-library")
 async def reset_library(
@@ -861,7 +845,8 @@ async def get_queue_status(session: Session = Depends(get_session), user: str = 
     except Exception as e:
         logger.debug(f"Could not load queue_paused from database: {e}")
 
-    return {"paused": scheduler.paused, "db_paused": db_paused}
+    return {"paused": scheduler.paused, "db_paused": db_paused,
+            "auto_paused": getattr(scheduler, "auto_paused", False)}
 
 @app.post("/api/queue/pause")
 async def pause_queue(user: str = Depends(login_required)):
@@ -997,7 +982,10 @@ async def save_config(
 # API Endpoints
 @app.get("/api/overview")
 async def get_overview(session: Session = Depends(get_session), user: str = Depends(login_required)):
-    return overview_summary(session)
+    summary = overview_summary(session)
+    # Runtime-only scheduler state the DB-backed summary can't see
+    summary["auto_paused"] = getattr(scheduler, "auto_paused", False)
+    return summary
 
 @app.get("/api/stats")
 async def get_stats(session: Session = Depends(get_session), user: str = Depends(login_required)):
