@@ -238,6 +238,14 @@ def create_db_and_tables():
     except Exception:
         pass
 
+    # Migration: Add discord_webhook_url to AppSettings (write-only secret)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN discord_webhook_url VARCHAR"))
+    except Exception:
+        # Column likely exists
+        pass
+
     # Migration: Add current_fps to MediaItem
     try:
         with engine.connect() as connection:

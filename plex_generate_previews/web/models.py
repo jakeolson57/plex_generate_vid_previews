@@ -53,6 +53,9 @@ class AppSettings(SQLModel, table=True):
     data_limit_gb_per_hour: float = Field(default=0.0) # 0.0 means no limit
     total_bytes_processed_hour: int = Field(default=0)
     hour_start_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Discord notifications (write-only secret via API)
+    discord_webhook_url: Optional[str] = None
     rate_limit_exempt_paths: Optional[str] = None  # Comma-separated paths exempt from rate limiting (e.g., "/mnt/remote/nzbdav")
 
     # Sync settings
