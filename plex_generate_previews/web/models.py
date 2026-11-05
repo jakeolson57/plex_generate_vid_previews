@@ -103,3 +103,29 @@ class PreviewCompletion(SQLModel, table=True):
     media_item_id: int = Field(index=True)
     title: str
     completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+
+
+class LoudnessStream(SQLModel, table=True):
+    """Loudness analysis state per Plex audio stream (Phase 1: read-only).
+
+    Measurements are stored here; nothing is written to Plex's database
+    until the guarded write path (Phase 2). ``status`` is one of:
+    pending | measured | failed | undecodable.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plex_stream_id: int = Field(index=True)  # media_streams.id in Plex's DB
+    stream_index: int = 0
+    codec: Optional[str] = None
+    file_path: str = ""  # as Plex sees it (before local translation)
+    part_hash: Optional[str] = None
+    title: Optional[str] = None
+    library: Optional[str] = None
+    status: str = Field(default="pending", index=True)
+    ln_loudness: Optional[str] = None
+    ln_peak: Optional[str] = None
+    ln_lra: Optional[str] = None
+    ln_threshold: Optional[str] = None
+    ln_gain_offset: Optional[str] = None
+    error: Optional[str] = None
+    ffmpeg_identity: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
