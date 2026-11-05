@@ -257,6 +257,7 @@ function renderOverview() {
   $("completed").textContent = number(c.COMPLETED);
   $("library-count").textContent = `of ${number(total)} library items`;
   $("pending").textContent = number(data.pending);
+  $("eta").textContent = data.eta_display || "—";
   $("failed").textContent = number((c.FAILED || 0) + (c.SLOW_FAILED || 0));
   $("scope-label").textContent = data.settings.full_backlog
     ? "Full backlog"

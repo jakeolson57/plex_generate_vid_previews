@@ -101,3 +101,59 @@ def test_origin_filters_work_before_pagination_and_stats_require_auth(db):
         assert 'plex_token' not in settings and 'admin_password_hash' not in settings
     finally:
         main.app.dependency_overrides.clear()
+
+
+def test_eta_estimate_uses_trailing_hour_rate(db):
+    now = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
+    db.add(AppSettings(id=1, full_backlog=True))
+    for key in range(1, 7):
+        db.add(item(key))  # default status MISSING -> pending
+    for key, minutes in [(101, 5), (102, 30)]:
+        db.add(PreviewCompletion(media_item_id=key, title=f'Item {key}',
+                                completed_at=now - timedelta(minutes=minutes)))
+    db.commit()
+    summary = overview_summary(db, now)
+    assert summary['completed_hour'] == 2
+    assert summary['pending'] == 6
+    assert summary['eta_hours'] == pytest.approx(3.0)
+    assert summary['eta_display'] == '~3h'
+
+
+def test_eta_display_buckets(db):
+    now = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
+    db.add(AppSettings(id=1, full_backlog=True))
+    db.add(item(1))
+    db.add(PreviewCompletion(media_item_id=201, title='x', completed_at=now - timedelta(minutes=10)))
+    db.commit()
+    summary = overview_summary(db, now)
+    assert summary['eta_hours'] == pytest.approx(1.0)
+    assert summary['eta_display'] == '~1h'
+    # 30 pending at 1/hour -> days bucket
+    for key in range(2, 32):
+        db.add(item(key))
+    db.commit()
+    summary = overview_summary(db, now)
+    assert summary['eta_hours'] == pytest.approx(31.0)
+    assert summary['eta_display'] == '~31h'
+    for key in range(32, 80):
+        db.add(item(key))
+    db.commit()
+    summary = overview_summary(db, now)
+    assert summary['eta_display'] == '~3d'
+
+
+def test_eta_is_dash_when_idle_or_nothing_pending(db):
+    now = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
+    db.add(AppSettings(id=1, full_backlog=True))
+    db.add(item(1))
+    db.commit()
+    summary = overview_summary(db, now)  # pending but zero completions/hour
+    assert summary['eta_hours'] is None
+    assert summary['eta_display'] == '—'
+    db.delete(db.get(MediaItem, 1))
+    db.add(PreviewCompletion(media_item_id=301, title='x', completed_at=now - timedelta(minutes=10)))
+    db.commit()
+    summary = overview_summary(db, now)  # completions but nothing pending
+    assert summary['pending'] == 0
+    assert summary['eta_hours'] is None
+    assert summary['eta_display'] == '—'
