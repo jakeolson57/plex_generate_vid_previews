@@ -35,6 +35,10 @@
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3 2" />
       </symbol>
+      <symbol id="audio" viewBox="0 0 24 24">
+        <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+        <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      </symbol>
     </svg>
     <aside>
       <div class="brand">
@@ -77,6 +81,19 @@
             <use href="#play" /></svg
           >Libraries</button
         ><button
+          class="{{ 'active' if page == 'loudness' else '' }}"
+          onclick="location.href = '/loudness'"
+        >
+          <svg
+            width="17"
+            height="17"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <use href="#audio" /></svg
+          >Loudness</button
+        ><button
           class="{{ 'active' if page == 'settings' else '' }}"
           onclick="location.href = '/settings'"
         >
@@ -103,7 +120,7 @@
             >Plex Previews</a
           ><span class="path"
             >Workspace <span style="margin: 0 10px; opacity: 0.5">/</span> {{
-            'Settings' if page == 'settings' else 'Overview' }}</span
+            'Settings' if page == 'settings' else 'Loudness' if page == 'loudness' else 'Overview' }}</span
           >
         </div>
         <div class="top-actions">

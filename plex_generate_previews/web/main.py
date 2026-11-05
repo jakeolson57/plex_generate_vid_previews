@@ -1030,9 +1030,22 @@ def _loudness_context():
     return plex_config_folder, mappings, legacy_remote, legacy_local, undec_path
 
 
+@app.get("/loudness", response_class=HTMLResponse)
+async def loudness_page(request: Request, user: Optional[str] = Depends(get_current_user)):
+    """Read-only loudness overview page.
+
+    Shows what still needs loudness analysis. This page never starts
+    processing: no scheduler wiring, no analyze calls, no Plex writes.
+    """
+    if not user:
+        return RedirectResponse(url="/login")
+    return templates.TemplateResponse(request, "loudness.html", {"user": user})
+
+
 @app.get("/api/loudness/status")
 async def loudness_status(
     library: Optional[str] = None,
+    sample_limit: Optional[int] = None,
     session: Session = Depends(get_session),
     user: str = Depends(login_required),
 ):
@@ -1041,6 +1054,8 @@ async def loudness_status(
     Scans Plex's database (read-only) for audio streams of movies/episodes
     and reports how many already have loudness measurements vs. still need
     analysis. Never writes to Plex. ``?library=Name`` scopes to one library.
+    ``?sample_limit=N`` caps the pending sample (default 10); the page
+    requests a large limit to list everything pending.
     """
     import asyncio
     from ..plex_client import open_plex_db
@@ -1077,10 +1092,11 @@ async def loudness_status(
     failed = session.exec(
         select(func.count(LoudnessStream.id)).where(LoudnessStream.status == "failed")
     ).one()
+    limit = sample_limit if sample_limit and sample_limit > 0 else 10
     sample = [
         {"title": s["title"], "library": s["library"], "codec": s["codec"],
          "stream_index": s["stream_index"]}
-        for s in streams[:10]
+        for s in streams[:limit]
     ]
     return {
         "pending": summary["pending"],
