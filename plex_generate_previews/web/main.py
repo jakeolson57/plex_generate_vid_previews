@@ -18,7 +18,7 @@ from itsdangerous import URLSafeTimedSerializer
 from loguru import logger
 
 from .database import create_db_and_tables, get_session, engine
-from .models import MediaItem, PreviewStatus, AppSettings
+from .models import MediaItem, PreviewStatus, AppSettings, LoudnessStream
 from .scheduler import scheduler
 from .overview import overview_summary, library_connection_health
 import bcrypt
@@ -968,6 +968,217 @@ async def save_config(
 @app.get("/api/overview")
 async def get_overview(session: Session = Depends(get_session), user: str = Depends(login_required)):
     return overview_summary(session)
+
+
+def _loudness_context():
+    """Resolve Plex config folder + path mappings + undecodable store path.
+
+    Returns (plex_config_folder, mappings, legacy_remote, legacy_local, undec_path).
+    Raises HTTPException when Plex is not configured.
+    """
+    from ..plex_client import open_plex_db  # noqa: F401 (re-export guard)
+    config = getattr(scheduler, "config", None)
+    plex_config_folder = getattr(config, "plex_config_folder", None) if config else None
+    if not plex_config_folder:
+        raise HTTPException(status_code=400, detail="Plex config folder is not configured")
+    mappings = list(getattr(config, "plex_path_mappings", None) or [])
+    legacy_remote = getattr(config, "plex_videos_path_mapping", "") or ""
+    legacy_local = getattr(config, "plex_local_videos_path_mapping", "") or ""
+    from .database import sqlite_file_name
+    db_dir = os.path.dirname(os.path.abspath(sqlite_file_name))
+    undec_path = os.path.join(db_dir, "loudness_undecodable.db")
+    return plex_config_folder, mappings, legacy_remote, legacy_local, undec_path
+
+
+@app.get("/api/loudness/status")
+async def loudness_status(
+    library: Optional[str] = None,
+    session: Session = Depends(get_session),
+    user: str = Depends(login_required),
+):
+    """Read-only loudness discovery.
+
+    Scans Plex's database (read-only) for audio streams of movies/episodes
+    and reports how many already have loudness measurements vs. still need
+    analysis. Never writes to Plex. ``?library=Name`` scopes to one library.
+    """
+    import asyncio
+    from ..plex_client import open_plex_db
+    from ..loudness import scanner, analyze as loudness_analyze
+    from ..loudness.undecodable import connect as undec_connect
+    from .models import LoudnessStream
+
+    plex_config_folder, _m, _lr, _ll, undec_path = _loudness_context()
+
+    def _scan():
+        plex_db = open_plex_db(plex_config_folder)
+        try:
+            undec_con = undec_connect(undec_path)
+            try:
+                ffmpeg_id = loudness_analyze.ffmpeg_identity()
+                streams, summary = scanner.scan(
+                    plex_db,
+                    undecodable_con=undec_con,
+                    ffmpeg_identity=ffmpeg_id,
+                    library_names=[library] if library else None,
+                )
+            finally:
+                undec_con.close()
+        finally:
+            plex_db.close()
+        return streams, summary
+
+    streams, summary = await asyncio.to_thread(_scan)
+
+    # Our own Phase-1 measurements (app DB; awaiting the Phase-2 write path).
+    measured = session.exec(
+        select(func.count(LoudnessStream.id)).where(LoudnessStream.status == "measured")
+    ).one()
+    failed = session.exec(
+        select(func.count(LoudnessStream.id)).where(LoudnessStream.status == "failed")
+    ).one()
+    sample = [
+        {"title": s["title"], "library": s["library"], "codec": s["codec"],
+         "stream_index": s["stream_index"]}
+        for s in streams[:10]
+    ]
+    return {
+        "pending": summary["pending"],
+        "analyzed_in_plex": summary["analyzed_in_plex"],
+        "total_audio_streams": summary["total_audio"],
+        "undecodable_skipped": summary["undecodable_skipped"],
+        "measured_by_us": measured,
+        "failed_by_us": failed,
+        "per_library": summary["per_library"],
+        "sample_pending": sample,
+    }
+
+
+@app.post("/api/loudness/analyze")
+async def loudness_analyze_endpoint(
+    payload: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    user: str = Depends(login_required),
+):
+    """Analyze up to ``limit`` pending streams with ffmpeg loudnorm.
+
+    Read-only with respect to Plex: measurements are stored in the app's
+    own database (status ``measured``) for the Phase-2 write path.
+    Body: {"limit": 3, "library": "Movies"}. Runs in a worker thread;
+    each stream takes ~realtime to decode, so keep ``limit`` small.
+    """
+    import asyncio
+    import shutil
+    from ..plex_client import open_plex_db
+    from ..loudness import scanner, analyze as loudness_analyze
+    from ..loudness.undecodable import (
+        connect as undec_connect, mark_undecodable,
+    )
+    from ..loudness.paths import translate_plex_path
+    from .models import LoudnessStream
+    from datetime import datetime, timezone
+
+    limit = payload.get("limit", 3) if isinstance(payload, dict) else 3
+    try:
+        limit = max(1, min(int(limit), 20))
+    except (TypeError, ValueError):
+        limit = 3
+    library = payload.get("library") if isinstance(payload, dict) else None
+
+    plex_config_folder, mappings, legacy_remote, legacy_local, undec_path = _loudness_context()
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+
+    def _work():
+        plex_db = open_plex_db(plex_config_folder)
+        undec_con = undec_connect(undec_path)
+        try:
+            ffmpeg_id = loudness_analyze.ffmpeg_identity(ffmpeg)
+            streams, _summary = scanner.scan(
+                plex_db,
+                undecodable_con=undec_con,
+                ffmpeg_identity=ffmpeg_id,
+                library_names=[library] if library else None,
+            )
+
+            # Group by file so one ffmpeg can cover up to 3 streams of a file.
+            by_file = {}
+            skipped = []
+            for s in streams[:limit]:
+                local = translate_plex_path(s["file"], mappings, legacy_remote, legacy_local)
+                if not local or not os.path.exists(local):
+                    skipped.append({"stream_id": s["stream_id"], "title": s["title"],
+                                    "status": "failed",
+                                    "error": "file not reachable locally"})
+                    continue
+                by_file.setdefault(local, []).append(s)
+
+            results = list(skipped)
+            for local, group in by_file.items():
+                batch = [(str(g["stream_id"]), g["stream_index"], g["codec"]) for g in group[:3]]
+                try:
+                    if len(batch) == 1:
+                        _key, idx, codec = batch[0]
+                        fields = loudness_analyze.run(
+                            ffmpeg, local, idx, codec, group[0]["duration_ms"])
+                        measured = {group[0]["stream_id"]: fields}
+                    else:
+                        raw = loudness_analyze.run_many(
+                            ffmpeg, local, batch,
+                            max(g["duration_ms"] or 0 for g in group))
+                        measured = {int(k): v for k, v in raw.items()}
+                except loudness_analyze.UndecodableError as e:
+                    for g in group:
+                        mark_undecodable(undec_con, g["part_hash"], g["stream_index"],
+                                         g["codec"], ffmpeg_id)
+                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                                        "status": "undecodable", "error": str(e)[:200]})
+                    continue
+                except loudness_analyze.LoudnessError as e:
+                    for g in group:
+                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                                        "status": "failed", "error": str(e)[:200]})
+                    continue
+                for g in group:
+                    fields = measured.get(g["stream_id"])
+                    if fields is None:
+                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                                        "status": "failed",
+                                        "error": "no loudnorm report in batch output"})
+                        continue
+                    results.append({"stream_id": g["stream_id"], "title": g["title"],
+                                    "status": "measured",
+                                    "measurements": {k: fields[k] for k in fields
+                                                     if k != "ln:loudnessAnalysisVersion"}})
+            return results
+        finally:
+            undec_con.close()
+            plex_db.close()
+
+    results = await asyncio.to_thread(_work)
+
+    # Persist to the app DB (never to Plex in Phase 1).
+    for r in results:
+        row = session.exec(
+            select(LoudnessStream).where(
+                LoudnessStream.plex_stream_id == r["stream_id"])
+        ).first()
+        if row is None:
+            # Re-resolve stream metadata for the new row.
+            row = LoudnessStream(plex_stream_id=r["stream_id"], title=r.get("title"))
+        row.status = r["status"]
+        row.error = r.get("error")
+        row.ffmpeg_identity = loudness_analyze.ffmpeg_identity(ffmpeg)
+        row.updated_at = datetime.now(timezone.utc)
+        if r["status"] == "measured":
+            m = r["measurements"]
+            row.ln_loudness = m.get("ln:loudness")
+            row.ln_peak = m.get("ln:peak")
+            row.ln_lra = m.get("ln:lra")
+            row.ln_threshold = m.get("ln:threshold")
+            row.ln_gain_offset = m.get("ln:gainOffset")
+        session.add(row)
+    session.commit()
+    return {"analyzed": len(results), "results": results}
 
 @app.get("/api/stats")
 async def get_stats(session: Session = Depends(get_session), user: str = Depends(login_required)):
