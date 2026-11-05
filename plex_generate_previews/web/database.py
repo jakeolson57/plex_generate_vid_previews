@@ -278,6 +278,14 @@ def create_db_and_tables():
     except Exception:
         pass
 
+    # Migration: Add pause_on_transcode opt-in to AppSettings
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN pause_on_transcode INTEGER NOT NULL DEFAULT 0"))
+    except Exception:
+        # Column likely exists
+        pass
+
 def get_session():
     with Session(engine) as session:
         yield session
