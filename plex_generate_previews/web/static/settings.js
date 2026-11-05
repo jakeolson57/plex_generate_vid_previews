@@ -65,6 +65,23 @@ function setTab(tab, focus = false) {
 }
 $("settings-form").addEventListener("input", markDirty);
 $("settings-form").addEventListener("change", markDirty);
+$("discord-test").addEventListener("click", async () => {
+  const button = $("discord-test");
+  button.disabled = true;
+  try {
+    // Test the pasted URL first (unsaved), fall back to the stored one.
+    const url = $("discord_webhook_url").value.trim();
+    const result = await api("/api/settings/test-discord", {
+      method: "POST",
+      body: JSON.stringify(url ? { discord_webhook_url: url } : {}),
+    });
+    demo(result.message);
+  } catch (error) {
+    demo(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
 function draft() {
   const result = {};
   for (const name of names) {
@@ -85,6 +102,10 @@ function populate(values) {
   form.elements.scope.value = values.scope;
   $("new_password").value = "";
   $("confirm_password").value = "";
+  $("discord_webhook_url").value = "";
+  $("discord-status").textContent = values.discord_webhook_configured
+    ? "Configured"
+    : "Not configured";
 }
 function markDirty() {
   if (!loaded) return;
@@ -169,6 +190,7 @@ async function saveSettings(e) {
     original = structuredClone(value);
     $("new_password").value = "";
     $("confirm_password").value = "";
+    $("discord_webhook_url").value = "";  // write-only secret, like the password fields
     draftBaseline = draft();
     demo(result.message);
   } catch (error) {
