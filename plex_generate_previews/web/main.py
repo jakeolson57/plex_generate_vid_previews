@@ -335,6 +335,28 @@ async def update_settings(
 
     return {"message": "Settings updated"}
 
+@app.post("/api/settings/test-discord")
+async def test_discord(
+    payload: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    user: str = Depends(login_required)
+):
+    """Send a test ping to the configured Discord webhook.
+
+    Accepts an optional {"discord_webhook_url": ...} to test an unsaved
+    URL straight from the settings form; otherwise uses the stored one.
+    """
+    from .notify import send_discord
+    webhook = payload.get("discord_webhook_url") if isinstance(payload, dict) else None
+    if not webhook:
+        settings = session.get(AppSettings, 1)
+        webhook = getattr(settings, 'discord_webhook_url', None) if settings else None
+    if not webhook:
+        raise HTTPException(status_code=400, detail="No Discord webhook URL configured")
+    if send_discord(webhook, "\U0001f514 Test ping from Plex Generate Previews \u2014 notifications are working"):
+        return {"message": "Test ping sent"}
+    raise HTTPException(status_code=502, detail="Failed to dispatch test ping")
+
 @app.post("/api/settings/reset-library")
 async def reset_library(
     session: Session = Depends(get_session),
