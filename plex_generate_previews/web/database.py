@@ -294,6 +294,36 @@ def create_db_and_tables():
         # Column likely exists
         pass
 
+    # Migration: Add loudness publishing opt-in to AppSettings (Phase 2)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN loudness_enabled INTEGER NOT NULL DEFAULT 0"))
+    except Exception:
+        # Column likely exists
+        pass
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("ALTER TABLE appsettings ADD COLUMN loudness_libraries VARCHAR"))
+    except Exception:
+        # Column likely exists
+        pass
+
+    # Migration: Add Plex part size + source fingerprint to LoudnessStream (Phase 2)
+    for _ddl in (
+        "ALTER TABLE loudnessstream ADD COLUMN part_size INTEGER",
+        "ALTER TABLE loudnessstream ADD COLUMN src_device INTEGER",
+        "ALTER TABLE loudnessstream ADD COLUMN src_inode INTEGER",
+        "ALTER TABLE loudnessstream ADD COLUMN src_size INTEGER",
+        "ALTER TABLE loudnessstream ADD COLUMN src_mtime REAL",
+    ):
+        try:
+            with engine.connect() as connection:
+                connection.execute(text(_ddl))
+        except Exception:
+            # Column likely exists
+            pass
+
 def get_session():
     with Session(engine) as session:
         yield session

@@ -17,6 +17,7 @@ function renderStats(data) {
   setText("stat-analyzed", number(data.analyzed_in_plex));
   setText("stat-total", number(data.total_audio_streams));
   setText("stat-measured", number(data.measured_by_us));
+  setText("stat-published", number(data.published_by_us));
   setText("stat-failed", number(data.failed_by_us));
   setText("stat-skipped", number(data.undecodable_skipped));
 }

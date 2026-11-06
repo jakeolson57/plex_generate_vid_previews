@@ -41,6 +41,8 @@ class AppSettings(SQLModel, table=True):
     full_backlog: bool = False  # Otherwise process only the current priority sources
     pause_on_transcode: bool = False  # Opt-in: auto-pause queue while Plex is transcoding
     discord_webhook_url: Optional[str] = None  # Discord webhook for failure / backlog-clear pings (write-only via API)
+    loudness_enabled: bool = False  # Opt-in: allow publishing measured loudness into Plex's DB (Phase 2, guarded)
+    loudness_libraries: Optional[str] = None  # Comma-separated Plex library names allowed for loudness publishing (default: all movie/TV)
 
     # Mount protection settings
     mount_check_enabled: bool = True  # Enable mount validation before sync/processing
@@ -110,7 +112,13 @@ class LoudnessStream(SQLModel, table=True):
 
     Measurements are stored here; nothing is written to Plex's database
     until the guarded write path (Phase 2). ``status`` is one of:
-    pending | measured | failed | undecodable.
+    pending | measured | published | failed | undecodable.
+    ``published`` means the measurements were written into Plex and
+    verified by read-back.
+
+    ``src_*`` is the source-file fingerprint captured at analysis time
+    (device/inode/size/mtime); the publish path re-verifies it inside
+    the write transaction and refuses rows without one.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     plex_stream_id: int = Field(index=True)  # media_streams.id in Plex's DB
@@ -118,6 +126,7 @@ class LoudnessStream(SQLModel, table=True):
     codec: Optional[str] = None
     file_path: str = ""  # as Plex sees it (before local translation)
     part_hash: Optional[str] = None
+    part_size: Optional[int] = None
     title: Optional[str] = None
     library: Optional[str] = None
     status: str = Field(default="pending", index=True)
@@ -128,4 +137,8 @@ class LoudnessStream(SQLModel, table=True):
     ln_gain_offset: Optional[str] = None
     error: Optional[str] = None
     ffmpeg_identity: Optional[str] = None
+    src_device: Optional[int] = None
+    src_inode: Optional[int] = None
+    src_size: Optional[int] = None
+    src_mtime: Optional[float] = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
