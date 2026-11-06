@@ -205,6 +205,45 @@ Plex Previews{% endblock %}{% block styles %}<link
           <div class="panel setting-card">
             <div class="card-heading">
               <div>
+                <h3>Loudness</h3>
+                <p>Write measured loudness into Plex so Normalize Loudness works.</p>
+              </div>
+              <span class="chip" id="loudness-status">Disabled</span>
+            </div>
+            <div class="field horizontal">
+              <div>
+                <label for="loudness_enabled">Publish loudness to Plex</label>
+                <p>
+                  Off by default. When on, measured tracks can be published
+                  into Plex's database — guarded by a Plex version check,
+                  journaled, and undoable. Music libraries are never written.
+                </p>
+              </div>
+              <label class="switch"
+                ><input
+                  id="loudness_enabled"
+                  name="loudness_enabled"
+                  type="checkbox"
+                  aria-label="Publish loudness to Plex" /><span></span
+              ></label>
+            </div>
+            <div class="field">
+              <label for="loudness_libraries">Libraries</label
+              ><input
+                id="loudness_libraries"
+                name="loudness_libraries"
+                type="text"
+                placeholder="Movies, TV Shows"
+              />
+              <p>
+                Comma-separated Plex library names allowed for publishing.
+                Leave blank to allow all movie/TV libraries.
+              </p>
+            </div>
+          </div>
+          <div class="panel setting-card">
+            <div class="card-heading">
+              <div>
                 <h3>Hourly data budget</h3>
                 <p>Control how much media is read each hour.</p>
               </div>
@@ -657,5 +696,5 @@ Plex Previews{% endblock %}{% block styles %}<link
   </footer>
 </main>
 {% endblock %}{% block scripts %}
-<script src="/static/settings.js?v=3"></script>
+<script src="/static/settings.js?v=4"></script>
 {% endblock %}

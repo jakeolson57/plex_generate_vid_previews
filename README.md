@@ -119,6 +119,82 @@ plex-generate-previews \
 - **Docker Support**: Pre-built images with GPU acceleration
 - **Command-line Interface**: CLI arguments and environment variables
 - **Web Interface**: Browser-based dashboard with real-time progress tracking, queue management, and error logging
+- **Loudness Analysis**: Measures audio loudness with ffmpeg loudnorm (Plex's own filter settings) and can publish the results into Plex's database so Normalize Loudness works — guarded, journaled, and undoable (see below)
+
+## Loudness (Normalize Loudness support)
+
+The `/loudness` page shows which audio tracks still need analysis.
+`POST /api/loudness/analyze` measures tracks with ffmpeg and stores the
+results in the app's own database; nothing is written to Plex yet.
+
+### Publishing measurements to Plex (Phase 2)
+
+Publishing is **off by default**. Enable it in Settings → Loudness, or
+with `LOUDNESS_ENABLED=true`. Publishing writes the measured `ln:*`
+fields into `media_streams.extra_data` (form-preserving: JSON rows stay
+JSON, URL-encoded rows stay URL-encoded) plus
+`ln:loudnessAnalysisVersion` into the owning `metadata_items.extra_data`,
+and bumps `media_streams.updated_at`. Nothing else in either row is
+touched. Music libraries are never written; publishing starts with a
+single library per call (`POST /api/loudness/publish`
+`{"library": "Movies", "limit": 10}`).
+
+Safety gates (all must pass before any write):
+
+- **Plex version**: only 1.43.4.x / 1.43.5.x (schema-verified). Other
+  versions refuse writes until the schema is re-verified.
+- **Server identity**: the connected server's `machineIdentifier` must
+  match `ProcessedMachineIdentifier` in `Preferences.xml`.
+- **WAL mode**: the live database must be in WAL mode (refuses copies
+  and network-mounted databases).
+- **Schema check** on every write transaction; any trigger on
+  `media_streams` or `extra_data`-affecting trigger on `metadata_items`
+  refuses the write.
+- **Source pinning**: the file fingerprint captured at analysis time and
+  the Plex part hash/size are re-verified inside the write transaction.
+- **Idempotency**: already-analyzed streams roll back, not error.
+- **Lock etiquette**: write-lock contention defers the stream for later,
+  never fails it.
+- **Journal**: every write intent is appended to
+  `loudness-writes.jsonl` (next to the app database) with fsync *before*
+  commit, with a confirmation after. Only confirmed entries are undone.
+
+Dry-run first: `{"library": "Movies", "limit": 10, "dry_run": true}`
+runs every gate and reports what would be written without touching
+Plex or the journal.
+
+### Undo
+
+```bash
+# Dry-run first to see what would be restored:
+python -m plex_generate_previews.loudness.undo \
+  --db "/config/plex/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db" \
+  --log /path/to/loudness-writes.jsonl --dry-run
+
+# Then run it for real. Stop Plex first: undo refuses while the
+# database is locked.
+python -m plex_generate_previews.loudness.undo \
+  --db ".../com.plexapp.plugins.library.db" \
+  --log /path/to/loudness-writes.jsonl
+```
+
+Undo restores the exact `extra_data` values each stream and metadata
+item had before the write, newest first, and refuses a database file
+that isn't the one the writes were made against (device + inode).
+Entries whose current values no longer match what was written (e.g.
+Plex re-analyzed the track since) are skipped, not clobbered.
+
+### Notes
+
+- Measurements alone don't enable the feature player-side: the player
+  account needs Plex Pass, and enabling Normalize Loudness causes audio
+  transcoding.
+- Values match Plex's native analysis format but are not bit-identical
+  in all cases (notably EAC3, where ffmpeg uses `-drc_scale 0` to
+  approximate Plex's Dolby decoder). Plex still honors them.
+- If Plex's own "Analyze audio tracks for loudness" is also on, both
+  will do the same work; setting it to Never avoids duplicate analysis
+  (the app never changes that setting itself).
 
 ## Requirements
 
