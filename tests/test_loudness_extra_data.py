@@ -87,3 +87,68 @@ def test_translate_plex_path():
     # no match -> unchanged
     assert translate_plex_path("/elsewhere/x.mkv", mappings) == "/elsewhere/x.mkv"
     assert translate_plex_path("", mappings) == ""
+
+
+# --- Phase 2: form-preserving encoding ---
+
+FIELDS = {
+    "ln:loudness": "-16.32",
+    "ln:peak": "-1.24",
+    "ln:lra": "7.12",
+    "ln:threshold": "-34.21",
+    "ln:gainOffset": "-0.32",
+    "ln:loudnessAnalysisVersion": "0.02",
+}
+
+
+def test_detect_form():
+    assert extra_data.detect_form(JSON_FORM) == "json"
+    assert extra_data.detect_form(URL_JSON_FORM) == "url_json"
+    assert extra_data.detect_form(QUERY_FORM) == "query"
+    assert extra_data.detect_form("") == "empty"
+    assert extra_data.detect_form(None) == "empty"
+
+
+def test_encode_roundtrip_all_forms():
+    decoded = json.loads(JSON_FORM)
+    for form in ("json", "url_json", "query"):
+        encoded = extra_data.encode_extra_data(decoded, form)
+        assert extra_data.detect_form(encoded) == form
+        assert extra_data.decode_extra_data(encoded) == decoded
+
+
+def test_merge_preserves_form_and_other_keys():
+    # JSON form: other keys survive, form stays JSON
+    merged = extra_data.merge_loudness_fields(
+        json.dumps({"title": "Some Movie"}), FIELDS)
+    assert extra_data.detect_form(merged) == "json"
+    out = extra_data.decode_extra_data(merged)
+    assert out["title"] == "Some Movie"
+    assert out["ln:loudness"] == "-16.32"
+    # URL-encoded JSON form stays URL-encoded JSON
+    merged = extra_data.merge_loudness_fields(
+        quote(json.dumps({"title": "Some Movie"})), FIELDS)
+    assert extra_data.detect_form(merged) == "url_json"
+    assert extra_data.decode_extra_data(merged)["title"] == "Some Movie"
+    # Query form stays query form
+    merged = extra_data.merge_loudness_fields("title=Some+Movie", FIELDS)
+    assert extra_data.detect_form(merged) == "query"
+    assert extra_data.decode_extra_data(merged)["title"] == "Some Movie"
+    # Empty original -> fresh JSON
+    merged = extra_data.merge_loudness_fields("", FIELDS)
+    assert extra_data.decode_extra_data(merged) == FIELDS
+
+
+def test_merge_refuses_garbage():
+    import pytest
+    with pytest.raises(ValueError):
+        extra_data.merge_loudness_fields("not json at all {{{", FIELDS)
+
+
+def test_merge_with_control_chars_roundtrips():
+    # Plex stores literal control chars in values like ma:title.
+    original = json.dumps({"ma:title": "Line1\nLine2", "title": "T"})
+    merged = extra_data.merge_loudness_fields(original, FIELDS)
+    out = extra_data.decode_extra_data(merged)
+    assert out["ma:title"] == "Line1\nLine2"
+    assert out["ln:loudness"] == "-16.32"

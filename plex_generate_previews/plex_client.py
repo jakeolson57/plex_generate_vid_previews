@@ -142,6 +142,57 @@ def open_plex_db(plex_config_folder: str) -> sqlite3.Connection:
     return sqlite3.connect(f'file:{db_path}?mode=ro&immutable=1', uri=True)
 
 
+def open_plex_db_writable(plex_config_folder: str,
+                          timeout_s: float = 30.0) -> sqlite3.Connection:
+    """
+    Open the Plex SQLite database for writing (loudness Phase 2 only).
+
+    This is a separate entry point from the read-only ``open_plex_db``
+    on purpose: the writable path has different safety rules and must
+    never be reached by read-only code. Callers must still pass the
+    guard checks (Plex version, server identity, WAL mode, schema)
+    before writing — see ``loudness.guard`` and ``loudness.plex_db``.
+
+    The connection uses autocommit (``isolation_level=None``) so the
+    write path controls transactions explicitly with BEGIN IMMEDIATE.
+    WAL mode is *verified*, never switched: Plex owns the journal mode,
+    and a database that isn't already in WAL mode is refused.
+
+    Args:
+        plex_config_folder: Path to Plex config folder
+        timeout_s: sqlite busy timeout in seconds
+
+    Returns:
+        sqlite3.Connection: Writable database connection
+
+    Raises:
+        FileNotFoundError: If the database file doesn't exist
+        sqlite3.DatabaseError: If the database can't be opened
+        ValueError: If the database is not in WAL mode
+    """
+    db_path = _get_plex_db_path(plex_config_folder)
+
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"Plex database not found at: {db_path}")
+
+    _validate_and_invalidate_nfs_cache(db_path)
+
+    con = sqlite3.connect(db_path, timeout=timeout_s, isolation_level=None)
+    try:
+        con.execute(f"PRAGMA busy_timeout = {int(timeout_s * 1000)}")
+        mode = con.execute("PRAGMA journal_mode").fetchone()
+        if (mode[0] if mode else "").lower() != "wal":
+            raise ValueError(
+                f"Plex database journal_mode is {(mode[0] if mode else None)!r}, "
+                "not 'wal' — refusing writable open "
+                "(copied or network-mounted databases are not safe to write)"
+            )
+    except BaseException:
+        con.close()
+        raise
+    return con
+
+
 def retry_plex_call(func, *args, max_retries=3, retry_delay=1.0, **kwargs):
     """
     Retry a Plex API call if it fails due to XML parsing errors.

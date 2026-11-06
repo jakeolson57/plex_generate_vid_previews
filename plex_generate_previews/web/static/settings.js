@@ -9,6 +9,8 @@ const names = [
   "use_database_sync",
   "pause_on_transcode",
   "discord_webhook_url",
+  "loudness_enabled",
+  "loudness_libraries",
   "data_limit_gb_per_hour",
   "rate_limit_exempt_paths",
   "enable_multi_user_priority",
@@ -106,6 +108,9 @@ function populate(values) {
   $("discord-status").textContent = values.discord_webhook_configured
     ? "Configured"
     : "Not configured";
+  $("loudness-status").textContent = values.loudness_enabled
+    ? "Enabled"
+    : "Disabled";
 }
 function markDirty() {
   if (!loaded) return;
@@ -168,6 +173,8 @@ async function saveSettings(e) {
     use_database_sync: value.use_database_sync,
     pause_on_transcode: value.pause_on_transcode,
     discord_webhook_url: value.discord_webhook_url,
+    loudness_enabled: value.loudness_enabled,
+    loudness_libraries: value.loudness_libraries,
     full_backlog: value.scope === "all",
     data_limit_gb_per_hour: Number(value.data_limit_gb_per_hour),
     rate_limit_exempt_paths: value.rate_limit_exempt_paths,

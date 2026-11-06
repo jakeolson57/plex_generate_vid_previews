@@ -118,6 +118,11 @@ class Config:
     # Database-only mode (bypass Plex API for library scanning)
     database_only: bool = False
 
+    # Loudness (Phase 2): operator override for the guarded Plex write
+    # path. Default off; the Settings toggle is the normal switch and
+    # either one being true enables publishing.
+    loudness_enabled: bool = False
+
     # Internal constants
     worker_pool_timeout: int = 30
 
@@ -499,6 +504,10 @@ def load_config(cli_args=None, print_help=True) -> Config:
 
     # Database-only mode (bypass Plex API for library scanning)
     database_only = get_config_value_bool(cli_args, 'database_only', 'DATABASE_ONLY', False)
+
+    # Loudness (Phase 2): operator override enabling the guarded write
+    # path. Default off; see AppSettings.loudness_enabled (Settings UI).
+    loudness_enabled = get_config_value_bool(cli_args, 'loudness_enabled', 'LOUDNESS_ENABLED', False)
     
     # Initialize validation lists
     missing_params = []
@@ -605,7 +614,8 @@ def load_config(cli_args=None, print_help=True) -> Config:
         ffmpeg_path=ffmpeg_path,
         log_level=log_level,
         scheduler_loop_interval=get_config_value_int(cli_args, 'scheduler_loop_interval', 'SCHEDULER_LOOP_INTERVAL', 5),
-        database_only=database_only
+        database_only=database_only,
+        loudness_enabled=loudness_enabled
     )
     
     # Set the timeout envvar for https://github.com/pkkid/python-plexapi

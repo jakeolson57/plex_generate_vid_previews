@@ -49,7 +49,8 @@ def test_loudness_page_renders_for_admin(client):
     response = client.get("/loudness")
     assert response.status_code == 200
     assert "Loudness" in response.text
-    assert "/static/loudness.js?v=1" in response.text
+    assert "/static/loudness.js?v=2" in response.text
+    assert "stat-published" in response.text
     # Read-only page: no analyze button, no scheduler wiring.
     assert "loudness/analyze" not in response.text
 

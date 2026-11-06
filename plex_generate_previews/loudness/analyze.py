@@ -235,5 +235,21 @@ def ffmpeg_identity(ffmpeg="ffmpeg"):
         return "unknown"
 
 
+def has_loudnorm_filter(ffmpeg="ffmpeg"):
+    """True when the ffmpeg binary ships the loudnorm filter.
+
+    The write path checks this at runtime so a bad image fails loudly
+    instead of silently writing nothing.
+    """
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-filters"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        return False
+    return re.search(r"\bloudnorm\b", proc.stdout or "") is not None
+
+
 def new_cancel_event():
     return threading.Event()

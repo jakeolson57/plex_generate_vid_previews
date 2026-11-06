@@ -196,6 +196,8 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
             "priority_history_limit": 50,
             "full_backlog": False,
             "pause_on_transcode": False,
+            "loudness_enabled": False,
+            "loudness_libraries": "",
             "discord_webhook_configured": False,
             "data_limit_gb_per_hour": 0.0,
             "rate_limit_exempt_paths": "",
@@ -217,6 +219,8 @@ async def get_settings(session: Session = Depends(get_session), user: str = Depe
         "priority_history_limit": settings.priority_history_limit if hasattr(settings, 'priority_history_limit') else 50,
         "full_backlog": settings.full_backlog,
         "pause_on_transcode": settings.pause_on_transcode if hasattr(settings, 'pause_on_transcode') else False,
+        "loudness_enabled": settings.loudness_enabled if hasattr(settings, 'loudness_enabled') else False,
+        "loudness_libraries": settings.loudness_libraries if hasattr(settings, 'loudness_libraries') else "",
         "discord_webhook_configured": bool(getattr(settings, 'discord_webhook_url', None)),
         "data_limit_gb_per_hour": settings.data_limit_gb_per_hour if hasattr(settings, 'data_limit_gb_per_hour') else 0.0,
         "rate_limit_exempt_paths": settings.rate_limit_exempt_paths if hasattr(settings, 'rate_limit_exempt_paths') else ""
@@ -260,6 +264,17 @@ async def update_settings(
         if not isinstance(payload["pause_on_transcode"], bool):
             raise HTTPException(status_code=400, detail="pause_on_transcode must be a boolean")
         settings.pause_on_transcode = payload["pause_on_transcode"]
+
+    # Loudness publishing opt-in (Phase 2, guarded). Off by default;
+    # the LOUDNESS_ENABLED env var is an operator override (either on
+    # enables publishing). Libraries restrict which Plex libraries may
+    # receive writes (comma-separated; empty = all movie/TV).
+    if "loudness_enabled" in payload:
+        if not isinstance(payload["loudness_enabled"], bool):
+            raise HTTPException(status_code=400, detail="loudness_enabled must be a boolean")
+        settings.loudness_enabled = payload["loudness_enabled"]
+    if "loudness_libraries" in payload:
+        settings.loudness_libraries = payload["loudness_libraries"]
 
     # Discord webhook URL is write-only (never returned by GET /api/settings).
     # A non-empty value sets/replaces it; empty or absent leaves it unchanged.
@@ -1010,10 +1025,23 @@ async def get_overview(session: Session = Depends(get_session), user: str = Depe
     return summary
 
 
+def _stream_meta(s):
+    """Stream metadata the app DB needs for the Phase-2 publish path."""
+    return {
+        "stream_index": s.get("stream_index", 0),
+        "codec": s.get("codec"),
+        "file_path": s.get("file", ""),
+        "part_hash": s.get("part_hash"),
+        "part_size": s.get("part_size"),
+        "library": s.get("library"),
+    }
+
+
 def _loudness_context():
     """Resolve Plex config folder + path mappings + undecodable store path.
 
-    Returns (plex_config_folder, mappings, legacy_remote, legacy_local, undec_path).
+    Returns (plex_config_folder, mappings, legacy_remote, legacy_local,
+    undec_path, journal_path).
     Raises HTTPException when Plex is not configured.
     """
     from ..plex_client import open_plex_db  # noqa: F401 (re-export guard)
@@ -1027,7 +1055,8 @@ def _loudness_context():
     from .database import sqlite_file_name
     db_dir = os.path.dirname(os.path.abspath(sqlite_file_name))
     undec_path = os.path.join(db_dir, "loudness_undecodable.db")
-    return plex_config_folder, mappings, legacy_remote, legacy_local, undec_path
+    journal_path = os.path.join(db_dir, "loudness-writes.jsonl")
+    return plex_config_folder, mappings, legacy_remote, legacy_local, undec_path, journal_path
 
 
 @app.get("/loudness", response_class=HTMLResponse)
@@ -1063,7 +1092,7 @@ async def loudness_status(
     from ..loudness.undecodable import connect as undec_connect
     from .models import LoudnessStream
 
-    plex_config_folder, _m, _lr, _ll, undec_path = _loudness_context()
+    plex_config_folder, _m, _lr, _ll, undec_path, _jp = _loudness_context()
 
     def _scan():
         plex_db = open_plex_db(plex_config_folder)
@@ -1092,6 +1121,9 @@ async def loudness_status(
     failed = session.exec(
         select(func.count(LoudnessStream.id)).where(LoudnessStream.status == "failed")
     ).one()
+    published = session.exec(
+        select(func.count(LoudnessStream.id)).where(LoudnessStream.status == "published")
+    ).one()
     limit = sample_limit if sample_limit and sample_limit > 0 else 10
     sample = [
         {"title": s["title"], "library": s["library"], "codec": s["codec"],
@@ -1104,6 +1136,7 @@ async def loudness_status(
         "total_audio_streams": summary["total_audio"],
         "undecodable_skipped": summary["undecodable_skipped"],
         "measured_by_us": measured,
+        "published_by_us": published,
         "failed_by_us": failed,
         "per_library": summary["per_library"],
         "sample_pending": sample,
@@ -1141,7 +1174,7 @@ async def loudness_analyze_endpoint(
         limit = 3
     library = payload.get("library") if isinstance(payload, dict) else None
 
-    plex_config_folder, mappings, legacy_remote, legacy_local, undec_path = _loudness_context()
+    plex_config_folder, mappings, legacy_remote, legacy_local, undec_path, _jp = _loudness_context()
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
 
     def _work():
@@ -1162,7 +1195,7 @@ async def loudness_analyze_endpoint(
             for s in streams[:limit]:
                 local = translate_plex_path(s["file"], mappings, legacy_remote, legacy_local)
                 if not local or not os.path.exists(local):
-                    skipped.append({"stream_id": s["stream_id"], "title": s["title"],
+                    skipped.append({**_stream_meta(s), "stream_id": s["stream_id"], "title": s["title"],
                                     "status": "failed",
                                     "error": "file not reachable locally"})
                     continue
@@ -1186,23 +1219,32 @@ async def loudness_analyze_endpoint(
                     for g in group:
                         mark_undecodable(undec_con, g["part_hash"], g["stream_index"],
                                          g["codec"], ffmpeg_id)
-                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                        results.append({**_stream_meta(g), "stream_id": g["stream_id"], "title": g["title"],
                                         "status": "undecodable", "error": str(e)[:200]})
                     continue
                 except loudness_analyze.LoudnessError as e:
                     for g in group:
-                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                        results.append({**_stream_meta(g), "stream_id": g["stream_id"], "title": g["title"],
                                         "status": "failed", "error": str(e)[:200]})
                     continue
                 for g in group:
                     fields = measured.get(g["stream_id"])
                     if fields is None:
-                        results.append({"stream_id": g["stream_id"], "title": g["title"],
+                        results.append({**_stream_meta(g), "stream_id": g["stream_id"], "title": g["title"],
                                         "status": "failed",
                                         "error": "no loudnorm report in batch output"})
                         continue
-                    results.append({"stream_id": g["stream_id"], "title": g["title"],
+                    # Source fingerprint, captured at analysis time: the
+                    # publish path re-verifies it inside the write
+                    # transaction and refuses rows without one.
+                    try:
+                        from ..loudness.plex_db import fingerprint_file
+                        fingerprint = fingerprint_file(local)
+                    except OSError:
+                        fingerprint = None
+                    results.append({**_stream_meta(g), "stream_id": g["stream_id"], "title": g["title"],
                                     "status": "measured",
+                                    "src_fingerprint": fingerprint,
                                     "measurements": {k: fields[k] for k in fields
                                                      if k != "ln:loudnessAnalysisVersion"}})
             return results
@@ -1225,6 +1267,19 @@ async def loudness_analyze_endpoint(
         row.error = r.get("error")
         row.ffmpeg_identity = loudness_analyze.ffmpeg_identity(ffmpeg)
         row.updated_at = datetime.now(timezone.utc)
+        # Stream metadata the Phase-2 publish path needs.
+        if r.get("stream_index") is not None:
+            row.stream_index = r["stream_index"]
+        if r.get("codec") is not None:
+            row.codec = r["codec"]
+        if r.get("file_path"):
+            row.file_path = r["file_path"]
+        if r.get("part_hash") is not None:
+            row.part_hash = r["part_hash"]
+        if r.get("part_size") is not None:
+            row.part_size = r["part_size"]
+        if r.get("library"):
+            row.library = r["library"]
         if r["status"] == "measured":
             m = r["measurements"]
             row.ln_loudness = m.get("ln:loudness")
@@ -1232,9 +1287,143 @@ async def loudness_analyze_endpoint(
             row.ln_lra = m.get("ln:lra")
             row.ln_threshold = m.get("ln:threshold")
             row.ln_gain_offset = m.get("ln:gainOffset")
+            fp = r.get("src_fingerprint")
+            if fp is not None:
+                row.src_device = fp.device
+                row.src_inode = fp.inode
+                row.src_size = fp.size
+                row.src_mtime = fp.mtime
         session.add(row)
     session.commit()
     return {"analyzed": len(results), "results": results}
+
+@app.post("/api/loudness/publish")
+async def loudness_publish_endpoint(
+    payload: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    user: str = Depends(login_required),
+):
+    """Publish measured loudness into Plex (Phase 2, guarded).
+
+    Body: {"library": "Movies", "limit": 10, "dry_run": false}.
+    ``library`` is required: publishing starts with a single library.
+    Requires loudness publishing to be enabled — the Settings toggle
+    (``loudness_enabled``) or the ``LOUDNESS_ENABLED`` env var; either
+    one on enables it, both default off. ``dry_run`` runs every gate
+    (ffmpeg loudnorm, Plex version + identity, WAL, schema, fingerprint)
+    and reports what would be written without touching Plex or the
+    journal. Lock contention defers a stream (``deferred``), never
+    fails it.
+    """
+    import asyncio
+    from ..loudness import publish as loudness_publish
+    from ..loudness.errors import GuardError
+    from ..loudness.plex_db import SourceFingerprint
+
+    library = payload.get("library") if isinstance(payload, dict) else None
+    if not library or not str(library).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="library is required: publishing starts with a single library")
+    library = str(library).strip()
+    limit = payload.get("limit", 10) if isinstance(payload, dict) else 10
+    try:
+        limit = max(1, min(int(limit), 20))
+    except (TypeError, ValueError):
+        limit = 10
+    dry_run = bool(payload.get("dry_run")) if isinstance(payload, dict) else False
+
+    settings = session.get(AppSettings, 1)
+    config = getattr(scheduler, "config", None)
+    enabled = bool(getattr(settings, "loudness_enabled", False))
+    if not enabled and config is not None:
+        enabled = bool(getattr(config, "loudness_enabled", False))
+    if not enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Loudness publishing is disabled. Enable it in Settings "
+                   "(Loudness) or set LOUDNESS_ENABLED=true, then retry.")
+    allowed = (getattr(settings, "loudness_libraries", None) or "").strip()
+    if allowed:
+        allowed_names = {n.strip().lower() for n in allowed.split(",") if n.strip()}
+        if library.lower() not in allowed_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"library {library!r} is not in loudness_libraries "
+                       f"({allowed})")
+
+    measured = session.exec(
+        select(LoudnessStream).where(LoudnessStream.status == "measured")
+    ).all()
+    rows = []
+    for row in measured:
+        if (row.library or "").strip().lower() != library.lower():
+            continue
+        fp = None
+        if (row.src_device is not None and row.src_inode is not None
+                and row.src_size is not None and row.src_mtime is not None):
+            fp = SourceFingerprint(device=row.src_device, inode=row.src_inode,
+                                   size=row.src_size, mtime=row.src_mtime)
+        rows.append({
+            "plex_stream_id": row.plex_stream_id,
+            "title": row.title,
+            "file_path": row.file_path,
+            "part_hash": row.part_hash,
+            "part_size": row.part_size,
+            "ln_loudness": row.ln_loudness,
+            "ln_peak": row.ln_peak,
+            "ln_lra": row.ln_lra,
+            "ln_threshold": row.ln_threshold,
+            "ln_gain_offset": row.ln_gain_offset,
+            "fingerprint": fp,
+        })
+        if len(rows) >= limit:
+            break
+
+    plex_config_folder, mappings, legacy_remote, legacy_local, _up, journal_path = (
+        _loudness_context()
+    )
+    plex_url = getattr(settings, "plex_url", None) or (
+        getattr(config, "plex_url", None) if config else None)
+    plex_token = getattr(settings, "plex_token", None) or (
+        getattr(config, "plex_token", None) if config else None)
+
+    def _work():
+        return loudness_publish.publish_measured(
+            rows,
+            plex_config_folder=plex_config_folder,
+            plex_url=plex_url,
+            plex_token=plex_token,
+            journal_path=journal_path,
+            path_mappings=mappings,
+            legacy_remote=legacy_remote,
+            legacy_local=legacy_local,
+            limit=limit,
+            dry_run=dry_run,
+        )
+
+    try:
+        summary = await asyncio.to_thread(_work)
+    except GuardError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not dry_run:
+        by_id = {r["stream_id"]: r for r in summary["results"]}
+        for row in measured:
+            outcome = by_id.get(row.plex_stream_id)
+            if outcome is None:
+                continue
+            if outcome["status"] in ("written", "already"):
+                row.status = "published"
+                row.error = None
+                row.updated_at = datetime.now(timezone.utc)
+                session.add(row)
+            elif outcome["status"] == "failed":
+                row.error = outcome.get("error")
+                row.updated_at = datetime.now(timezone.utc)
+                session.add(row)
+        session.commit()
+    return summary
 
 @app.get("/api/stats")
 async def get_stats(session: Session = Depends(get_session), user: str = Depends(login_required)):
